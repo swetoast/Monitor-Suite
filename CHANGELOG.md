@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.4.2
+
+- Refocused the README on Monitor Suite Agent as standalone Raspberry Pi server software.
+- Replaced obvious promotional bullets with differentiated server behavior: adaptive scheduling, standby-aware SMART checks, failure isolation, freshness accounting, conservative telemetry, and coherent cached snapshots.
+- Replaced the Home Assistant-led use-case section with concrete server capabilities.
+- Reduced Home Assistant to a possible future API consumer rather than presenting it as the purpose of the server.
+
+## 2.4.1
+
+- Refined the README into a concise GitHub landing page with a descriptive title, highlights, navigation, requirements, installation, usage examples, limitations, support guidance, and project information.
+- Added compact tables for monitored areas, API endpoints, health states, and power-source meanings.
+- Added a text architecture diagram without introducing image assets.
+- Clarified the current absence of a distribution license rather than implying usage rights.
+- Kept the README free of emojis and developer setup instructions.
+
+## 2.4.0
+
+- Rewrote the README around the problems Monitor Suite Agent solves for Raspberry Pi and Home Assistant users.
+- Added a clear summary of the monitoring, storage, power, health, and security value users receive.
+- Moved implementation detail behind practical installation, connection, management, and troubleshooting guidance.
+- Clarified that the agent is the Raspberry Pi-side data source and does not itself create Home Assistant entities.
+- Clarified unsupported measurements, power limitations, SMART compatibility, and trusted-LAN expectations.
+- Added README regression checks for the user-facing structure and exact copyright notice.
+
 ## 2.3.3
 
 - Added the exact project copyright notice: `Copyright (c) 2026 Toast`.

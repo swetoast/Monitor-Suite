@@ -1,149 +1,334 @@
 # Monitor Suite Agent
 
-Monitor Suite Agent is a small FastAPI daemon that samples meaningful Raspberry Pi and Linux telemetry in the background and serves one cached status response through Uvicorn.
+Monitor Suite Agent is a lightweight monitoring server for Raspberry Pi. It collects system, thermal, power, network, filesystem, Linux software RAID, and SMART data in the background and exposes a stable authenticated HTTP API.
+
+The server is designed for unattended operation on a trusted LAN. It schedules each probe according to its cost, keeps the latest coherent snapshot in memory, preserves last-known-good values through isolated read failures, and reports unsupported data as unavailable instead of inventing values.
+
+## Highlights
+
+- Adaptive RAID polling that increases refresh frequency during recovery, resync, check, and reshape operations
+- Standby-aware SMART collection that retains last-known values instead of intentionally waking supported sleeping disks
+- Failure isolation per probe group, so a temporary SMART or RAID error does not discard unrelated system telemetry
+- Last-known-good retention with explicit freshness and consecutive-failure accounting
+- Raspberry Pi firmware decoding for current undervoltage, thermal limiting, and performance limiting
+- Power values labelled by measurement source and confidence, without presenting internal rails as total input power
+- Physical-device and physical-interface filtering that excludes virtual network noise and unrelated attached storage
+- Cached, internally consistent snapshots served without executing hardware probes during API requests
+
+## Table of contents
+
+- [What it monitors](#what-it-monitors)
+- [Server capabilities](#server-capabilities)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Using the API](#using-the-api)
+- [Managing the service](#managing-the-service)
+- [Understanding health states](#understanding-health-states)
+- [Storage monitoring](#storage-monitoring)
+- [Power monitoring](#power-monitoring)
+- [Limitations](#limitations)
+- [Security](#security)
+- [Documentation](#documentation)
+- [Support and feedback](#support-and-feedback)
+- [Project information](#project-information)
+
+## What it monitors
+
+| Area | Information provided |
+| --- | --- |
+| Overall health | Whether the agent is starting, operating normally, degraded, or returning stale data |
+| Processor | CPU use, load, frequency, temperature, and throttling conditions |
+| Memory | Current memory use and availability |
+| System | Uptime, boot time, and Raspberry Pi model information |
+| Root storage | Filesystem use and the physical device backing the root filesystem |
+| Network | Current physical interface, link information, and transfer rates |
+| Cooling | Active-cooling availability and current state when supported |
+| Power conditions | Current undervoltage and firmware-reported power or performance limits |
+| RAID | Array state, RAID level, member health, recovery progress, speed, and estimated completion time |
+| SMART | Useful health, temperature, error, and lifetime values exposed by supported devices |
+| Power use | Internal-rail measurement or a calibrated CPU-load estimate, including source and confidence |
+
+Monitor Suite Agent reports only values it can obtain and interpret. Unsupported values are returned as unavailable rather than estimated without evidence.
+
+## Server capabilities
+
+### Independent probe scheduling
+
+CPU, thermal, power, resource, RAID, and SMART data do not share one polling interval. Fast values can stay responsive without forcing expensive storage checks to run at the same rate.
+
+### Coherent cached responses
+
+Collection happens in the background. API requests read a completed snapshot rather than launching commands and assembling partially updated data during the request.
+
+### Degraded operation
+
+Each probe group tracks availability, consecutive failures, and its last successful update. A failed optional source does not take down the server or erase healthy data from other probe groups.
+
+### Storage-aware monitoring
+
+RAID activity changes its own polling schedule. SMART checks use standby-aware operation, bounded retry delays, and parsed health evidence rather than treating every nonzero command exit as disk failure.
+
+### Conservative telemetry
+
+The server filters virtual interfaces, avoids publishing raw identifiers, distinguishes measured power from estimated power, and returns unavailable values when the host cannot provide reliable evidence.
+
+## How it works
+
+Monitor Suite Agent runs on the Raspberry Pi as a systemd service. It reads Raspberry Pi firmware and Linux system interfaces locally, keeps the latest results in memory, and serves a consistent snapshot over HTTP.
+
+```text
+Raspberry Pi hardware and Linux
+             |
+             v
+     Monitor Suite Agent
+             |
+       authenticated API
+             |
+             v
+     API consumer
+```
+
+This design means:
+
+- API consumers do not need SSH or shell access to the Raspberry Pi.
+- API requests return cached data instead of executing every probe on demand.
+- Fast-changing values refresh frequently while slower checks run less often.
+- RAID polling accelerates automatically during recovery, resync, check, or reshape.
+- SMART polling uses standby-aware behavior and does not intentionally wake a sleeping supported disk.
+- External consumers remain responsible for history, retention, dashboards, and alerting.
 
 ## Requirements
 
-- Python 3.11 or later
-- Raspberry Pi OS or another Linux distribution on Raspberry Pi
-- `vcgencmd` for Raspberry Pi firmware health and PMIC readings
+### Supported environment
 
-The current target is Raspberry Pi 5 Model B on Debian 13 with Python 3.13.5.
+- Raspberry Pi 5 is the primary tested hardware target.
+- Raspberry Pi OS or another Debian-family Linux distribution is recommended.
+- systemd must be available.
+- The installing account must have `sudo` access.
+- The Raspberry Pi needs internet access to GitHub and Python package sources during installation.
+- API consumers must be able to reach the Raspberry Pi over a trusted local network.
 
-## Install
+The installer adds missing Debian packages when needed, including Git, Python 3, Python virtual-environment support, pip, and `smartmontools`.
 
-```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install .
-```
+### Hardware-dependent features
 
-## Run
+Some data depends on the Raspberry Pi model, operating system, kernel, storage device, enclosure, USB bridge, and available command support. Missing support does not prevent the rest of the agent from operating.
 
-```bash
-MONITOR_SUITE_HOST=0.0.0.0 python -m monitor_suite_agent
-```
+## Installation
 
-The default port is `5000`.
-
-```text
-GET /status
-GET /health
-```
-
-Run one Uvicorn worker. Each worker would otherwise own a separate sampler and counter history.
-
-## Status data
-
-`/status` contains CPU, memory, root-filesystem, classified power, input voltage, cooling, physical-network, root-disk, boot-time, and concise current-health information. Raw PMIC rails, raw throttling flags, virtual interfaces, attached-disk inventories, and low-value Linux counters remain internal.
-
-Power source values:
-
-- `internal_rails`: sum of matched PMIC output-rail voltage and current pairs
-- `cpu_estimate`: calibrated CPU-load fallback estimate
-- `unavailable`: no supported source produced a value
-
-`internal_rails` is not complete USB-C input power.
-
-## Configuration
-
-```text
-MONITOR_SUITE_HOST=127.0.0.1
-MONITOR_SUITE_API_KEY=
-MONITOR_SUITE_ENABLE_DOCS=false
-MONITOR_SUITE_TRUSTED_PROXIES=
-MONITOR_SUITE_LIMIT_CONCURRENCY=32
-MONITOR_SUITE_BACKLOG=64
-MONITOR_SUITE_KEEP_ALIVE=5
-MONITOR_SUITE_PORT=5000
-MONITOR_SUITE_SAMPLE_INTERVAL=1
-MONITOR_SUITE_THERMAL_INTERVAL=2
-MONITOR_SUITE_POWER_INTERVAL=5
-MONITOR_SUITE_SLOW_SAMPLE_INTERVAL=30
-MONITOR_SUITE_COMMAND_TIMEOUT=2
-MONITOR_SUITE_STALE_AFTER=5
-MONITOR_SUITE_IDLE_W=
-MONITOR_SUITE_FULL_LOAD_W=
-MONITOR_SUITE_NETWORK_INTERFACE=
-MONITOR_SUITE_RAID_IDLE_INTERVAL=30
-MONITOR_SUITE_RAID_ACTIVE_INTERVAL=2
-MONITOR_SUITE_SMART_INTERVAL=900
-MONITOR_SUITE_SMART_RETRY_INTERVAL=60
-```
-
-The two calibration values must be supplied together. Measure them externally for the actual board and attached hardware.
-
-## Tests
-
-```bash
-python -m pytest
-```
-
-The regression suite contains fixtures derived from both supplied Raspberry Pi 5 probes.
-
-## Design
-
-See `docs/DESIGN.md` for the API contract, calculations, source-selection rules, security boundaries, and acceptance criteria.
-
-## Storage health
-
-The cached `/status` response includes compact RAID and SMART sections. RAID data contains only array state and counts needed to understand current health. SMART data contains only per-disk status, temperature when available, and remaining life when the device reports a trustworthy endurance value.
-
-`smartctl` is provided by the `smartmontools` package. If it is unavailable, SMART devices are omitted without affecting the rest of `/status`. Linux MD RAID state is read directly from sysfs and does not require `mdadm`.
-
-The approved Home Assistant entity surface is documented in `docs/HOME_ASSISTANT_ENTITY_MODEL.md`.
-
-## Probe scheduling
-
-The daemon uses independent monotonic deadlines so inexpensive, fast-changing counters can update quickly without repeatedly running slower or more intrusive probes.
-
-- Every 1 second: CPU usage and frequency, network throughput, and root-disk throughput.
-- Every 2 seconds: CPU temperature and fan speed.
-- Every 5 seconds: PMIC power, input voltage, and current firmware power, thermal, and throttling state.
-- Every 30 seconds: memory usage, root-filesystem usage, network metadata, and boot time.
-- RAID every 30 seconds while idle, automatically increasing to every 2 seconds during recovery, resync, checking, or reshape.
-- SMART every 15 minutes while available, with a 60-second retry only after a previously supported disk becomes unavailable.
-
-SMART uses `smartctl -n standby` and retains the last known values when a disk is sleeping, so monitoring does not wake an idle disk. All intervals are validated as positive values at startup.
-
-## Persistence
-
-The daemon is intentionally stateless and does not use SQLite or store time-series measurements. It retains only current runtime caches needed to calculate rates and serve the current snapshot. Home Assistant owns long-term history.
-
-## Network security
-
-Loopback remains the code default. The GitHub installer configures direct trusted-LAN access and generates a required API key of at least 32 characters. Clients send it in the `X-API-Key` header. Interactive documentation is disabled by default and Uvicorn has bounded concurrency and keep-alive defaults. See `docs/INSTALL.md` and `docs/SECURITY.md`.
-
-## Install from GitHub
-
-Run one command on the Raspberry Pi:
+Run this command on the Raspberry Pi:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/swetoast/Monitor-Suite/main/install.sh | sudo sh
 ```
 
-The installer installs missing Raspberry Pi OS or Debian packages, downloads the project, generates a protected API token, enables the systemd service, and prints the connection details. Existing configuration and tokens are preserved during updates.
+The installer will:
 
-Common management commands:
+1. Check and install required Debian packages.
+2. Download Monitor Suite Agent from GitHub.
+3. Create a dedicated `monitor-suite` service account.
+4. Create an isolated Python environment.
+5. Generate a random API token.
+6. Install and start the systemd service.
+7. Confirm that the service becomes active.
+8. Print the status URL, health URL, and API token.
+
+Save the displayed token. Every API request must include it in the `X-API-Key` header.
+
+### Inspect before installing
+
+The one-command installer downloads and executes a script with root privileges. If you prefer to inspect it first:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/swetoast/Monitor-Suite/main/install.sh -o install.sh
+less install.sh
+sudo sh install.sh install
+```
+
+For custom installation paths, private repositories, package details, and uninstall behavior, see the [installation guide](docs/INSTALL.md).
+
+## Using the API
+
+The installer prints the detected address. The default base URL is:
+
+```text
+http://<raspberry-pi-address>:5000
+```
+
+### Check agent availability
+
+```bash
+curl -H "X-API-Key: <api-token>" \
+  http://<raspberry-pi-address>:5000/health
+```
+
+`/health` returns the agent version, current daemon health state, and whether a complete sample is available.
+
+### Read the full status
+
+```bash
+curl -H "X-API-Key: <api-token>" \
+  http://<raspberry-pi-address>:5000/status
+```
+
+`/status` returns the complete current monitoring snapshot. A client can poll this endpoint and use the response for monitoring, history, alerts, or automation.
+
+### API endpoints
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Small availability and freshness check |
+| `GET /status` | Complete current monitoring snapshot |
+
+Interactive API documentation is disabled by default for the supported LAN deployment.
+
+## Managing the service
+
+### Check status
+
+```bash
+sudo /opt/monitor-suite-agent/install.sh status
+```
+
+### Update
 
 ```bash
 sudo /opt/monitor-suite-agent/install.sh update
-sudo /opt/monitor-suite-agent/install.sh status
+```
+
+Updates preserve the existing configuration and API token.
+
+### Show the API token
+
+```bash
 sudo /opt/monitor-suite-agent/install.sh token
+```
+
+Run this only in a private terminal because it prints the current token.
+
+### Rotate the API token
+
+```bash
 sudo /opt/monitor-suite-agent/install.sh rotate-token
+```
+
+Rotation restarts the service. Update every client immediately because the previous token stops working.
+
+### Uninstall
+
+```bash
 sudo /opt/monitor-suite-agent/install.sh uninstall
 ```
 
-Review the full installation and customization guide in `docs/INSTALL.md` before using the command on an untrusted network.
+Uninstall removes the service and application but preserves `/etc/monitor-suite-agent.env`. Remove that file manually only when the stored configuration is no longer needed.
 
-## Daemon health
+## Understanding health states
 
-`GET /health` returns only the daemon status, version, and whether a complete sample exists. Status precedence is `starting`, `stale`, `degraded`, and `ok`. One isolated probe failure retains the last good value; two consecutive failures from any expected probe group degrade the daemon until that group recovers.
+| State | Meaning |
+| --- | --- |
+| `starting` | The first complete monitoring sample is not available yet |
+| `ok` | Expected probe groups are current and no firmware health condition is active |
+| `degraded` | An expected probe group has repeatedly failed or a current firmware health condition is active |
+| `stale` | The last complete sample is older than the configured freshness limit |
 
-## Transition logging
+A single isolated probe failure retains the last good value. Persistent failures degrade the service until the affected probe group recovers. This avoids unnecessary state changes from one temporary read error while still exposing continuing problems.
 
-The daemon keeps normal polling quiet. It logs only meaningful state changes, including RAID degradation and recovery, probe availability and recovery, current undervoltage and thermal limiting, selected network interface, root backing device, and cooling hardware. Initial baselines and unchanged cycles are not logged.
+## Storage monitoring
 
-## Copyright
+### RAID
+
+Linux software RAID monitoring includes:
+
+- array state and RAID level
+- expected and active member count
+- member health
+- degraded-device count
+- recovery, resync, check, or reshape activity
+- progress, speed, and estimated completion time when available
+
+RAID is normally checked every 30 seconds. During active array work, polling increases to every 2 seconds so progress remains useful.
+
+### SMART
+
+SMART monitoring exposes useful health and lifetime information provided by supported devices. A nonzero `smartctl` exit status alone is not treated as proof that a disk has failed because unsupported log operations can also produce nonzero results.
+
+SMART is normally checked every 15 minutes. Standby-aware polling retains the last known values for a sleeping disk rather than intentionally waking it. Actual support depends on the disk, enclosure, USB bridge, kernel driver, and `smartctl` support.
+
+## Power monitoring
+
+Every reported power value identifies how it was obtained:
+
+| Source | Meaning |
+| --- | --- |
+| `internal_rails` | Calculated from matched internal PMIC voltage and current readings |
+| `cpu_estimate` | Fallback estimate based on CPU load and optional idle and full-load calibration |
+| `unavailable` | No supported source produced a value |
+
+Internal-rail power is not complete USB-C input power and must not be treated as wall-socket consumption. Optional idle and full-load calibration values must be configured together before the CPU estimate can use them.
+
+## Limitations
+
+Monitor Suite Agent:
+
+- does not control the Raspberry Pi, disks, RAID arrays, fans, or power supply
+- does not repair storage problems or modify RAID configuration
+- does not replace backups, native RAID tools, or manufacturer diagnostics
+- does not expose every raw Linux counter or every SMART field
+- does not provide complete USB-C input or wall-socket power measurement
+- does not store time-series history
+- does not provide dashboards, time-series storage, notifications, or client-specific entities
+- does not require a reverse proxy for its supported deployment
+
+## Security
+
+The intended deployment is direct access over a trusted LAN:
+
+```text
+API consumer -> Raspberry Pi:5000
+```
+
+The installer binds the service to the LAN, generates a protected API token, and disables interactive API documentation by default. Restrict TCP port 5000 so only approved LAN clients can connect.
+
+Do not:
+
+- expose the service directly to the internet
+- commit `/etc/monitor-suite-agent.env`
+- include the API token in screenshots or issue reports
+- publish unreviewed hardware probe captures
+- publish hostnames, addresses, serial numbers, WWNs, RAID UUIDs, or identifying storage model names
+
+See the [security guide](docs/SECURITY.md) for the complete deployment model.
+
+## Documentation
+
+- [Installation and management](docs/INSTALL.md)
+- [Security model](docs/SECURITY.md)
+- [Planned Home Assistant entity design](docs/HOME_ASSISTANT_ENTITY_MODEL.md)
+- [Technical design](docs/DESIGN.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Release history](CHANGELOG.md)
+
+## Support and feedback
+
+Use the repository's Issues section to report bugs, request improvements, or describe unsupported Raspberry Pi and storage configurations.
+
+Include:
+
+- Raspberry Pi model
+- operating-system version
+- Monitor Suite Agent version
+- output from `sudo systemctl status monitor-suite-agent.service`
+- relevant service logs after removing private or identifying information
+
+Never include the API token or the contents of `/etc/monitor-suite-agent.env`.
+
+## Project information
+
+Monitor Suite Agent is maintained as a Raspberry Pi monitoring-server project. The repository documentation describes the supported installation, security model, data contract, and technical design. Home Assistant is one possible future consumer of the server API, not the focus of the server itself.
+
+No distribution license is currently declared in this repository. Copyright is not a substitute for a software license, so users should not assume permission to redistribute or modify the project until a license is added.
+
+Last updated: September 19, 2026.
 
 Copyright (c) 2026 Toast

@@ -157,12 +157,52 @@ def test_unavailable_raid_result_counts_as_probe_failure(tmp_path: Path) -> None
     assert sampler._probe_health["raid"].available is False
 
 
-def test_copyright_notice_is_exact() -> None:
+def test_readme_is_user_focused_and_copyright_is_exact() -> None:
     expected = "Copyright (c) 2026 Toast"
     root = Path(__file__).parents[1]
     readme = (root / "README.md").read_text()
     package = (root / "monitor_suite_agent/__init__.py").read_text()
-    assert expected in readme
-    assert f'__copyright__ = "{expected}"' in package
+    required_sections = (
+        "## Highlights",
+        "## Table of contents",
+        "## What it monitors",
+        "## Server capabilities",
+        "## How it works",
+        "## Requirements",
+        "## Installation",
+        "## Using the API",
+        "## Managing the service",
+        "## Understanding health states",
+        "## Storage monitoring",
+        "## Power monitoring",
+        "## Limitations",
+        "## Security",
+        "## Documentation",
+        "## Support and feedback",
+        "## Project information",
+    )
+    for section in required_sections:
+        assert section in readme
+    assert readme.startswith("# Monitor Suite Agent")
+    assert readme.index("## Highlights") < readme.index("## Installation")
+    for capability in (
+        "Adaptive RAID polling",
+        "Standby-aware SMART collection",
+        "Failure isolation per probe group",
+        "Cached, internally consistent snapshots",
+    ):
+        assert capability in readme
+    assert readme.count("Home Assistant") <= 2
+    assert "One status source" not in readme
+    assert "One-command installation" not in readme
+    assert "Automatic background sampling" not in readme
+    assert "curl -fsSL https://raw.githubusercontent.com/swetoast/Monitor-Suite/main/install.sh | sudo sh" in readme
+    assert "Home Assistant is one possible future consumer" in readme
+    assert "No distribution license is currently declared" in readme
+    assert "Last updated: September 19, 2026." in readme
     assert readme.splitlines().count(expected) == 1
     assert package.splitlines().count(f'__copyright__ = "{expected}"') == 1
+    assert not any(
+        0x1F300 <= ord(character) <= 0x1FAFF
+        for character in readme
+    )
