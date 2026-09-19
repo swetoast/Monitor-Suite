@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "monitor-suite-agent"
+version = "2.3.2"
+description = "Trusted-LAN Raspberry Pi telemetry agent for Monitor Suite"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn>=0.34,<1.0",
+]
+
+[project.scripts]
+monitor-suite-agent = "monitor_suite_agent.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

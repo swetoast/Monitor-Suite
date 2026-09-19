@@ -1,0 +1,14 @@
+# Exact dependency set validated for Monitor Suite Agent 2.3.2
+annotated-doc==0.0.5
+annotated-types==0.7.0
+anyio==4.14.2
+click==8.5.0
+fastapi==0.136.3
+h11==0.16.0
+idna==3.19
+pydantic==2.12.5
+pydantic-core==2.41.5
+starlette==1.6.0
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+uvicorn==0.35.0
