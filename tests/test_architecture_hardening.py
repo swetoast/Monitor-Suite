@@ -155,3 +155,14 @@ def test_unavailable_raid_result_counts_as_probe_failure(tmp_path: Path) -> None
     sampler._raid_schedule.next_due = float("-inf")
     sampler._collect_sync()
     assert sampler._probe_health["raid"].available is False
+
+
+def test_copyright_notice_is_exact() -> None:
+    expected = "Copyright (c) 2026 Toast"
+    root = Path(__file__).parents[1]
+    readme = (root / "README.md").read_text()
+    package = (root / "monitor_suite_agent/__init__.py").read_text()
+    assert expected in readme
+    assert f'__copyright__ = "{expected}"' in package
+    assert readme.splitlines().count(expected) == 1
+    assert package.splitlines().count(f'__copyright__ = "{expected}"') == 1

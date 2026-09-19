@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.3
+
+- Added the exact project copyright notice: `Copyright (c) 2026 Toast`.
+- Added a regression test that rejects altered copyright wording.
+
 ## 2.3.2
 
 - Fixed Git updates after the installation directory has been transferred to the dedicated service account by explicitly marking that checkout as safe for each root-run Git command.

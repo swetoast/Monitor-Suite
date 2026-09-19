@@ -143,3 +143,7 @@ Review the full installation and customization guide in `docs/INSTALL.md` before
 ## Transition logging
 
 The daemon keeps normal polling quiet. It logs only meaningful state changes, including RAID degradation and recovery, probe availability and recovery, current undervoltage and thermal limiting, selected network interface, root backing device, and cooling hardware. Initial baselines and unchanged cycles are not logged.
+
+## Copyright
+
+Copyright (c) 2026 Toast
