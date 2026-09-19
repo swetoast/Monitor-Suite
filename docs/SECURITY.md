@@ -37,7 +37,7 @@ The server defaults to 32 concurrent connections, a backlog of 64, and a five-se
 
 ## Least privilege
 
-Run the daemon under the dedicated `monitor-suite` service account. Grant only the device access needed by `smartctl` and Raspberry Pi firmware tools. Do not run the web service as root solely for convenience.
+The daemon runs as root because SMART access through USB bridges, NVMe controller access, Linux MD RAID inspection, and Raspberry Pi hardware telemetry are not consistently available to an unprivileged service account. The systemd unit retains filesystem, kernel, control-group, privilege-escalation, executable-memory, home-directory, and temporary-directory restrictions. Keep the service on a trusted LAN and protect the API token.
 
 The installer and `deploy/monitor-suite-agent.service` provide the baseline. Device access and systemd restrictions must still be verified on the real Raspberry Pi.
 

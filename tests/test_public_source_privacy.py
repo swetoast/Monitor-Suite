@@ -103,3 +103,28 @@ def test_no_committed_secrets() -> None:
     for path, text in source_text().items():
         assert not concrete_secret.search(text), f"possible committed secret in {path}"
         assert private_key not in text, f"private key found in {path}"
+
+
+
+def test_drive_temperature_fixture_contains_no_hardware_identity() -> None:
+    fixture = (ROOT / "tests/fixtures/drive_temperature_probe_pi5.json").read_text()
+    lowered = fixture.lower()
+    forbidden_hex = (
+        "6879706572696f6e",
+        "776433313430",
+        "736b6333303030",
+        "6d7a766c77313238",
+    )
+    forbidden_keys = (
+        "serial_number",
+        "firmware_version",
+        '"wwn"',
+        '"uuid"',
+        '"model_name"',
+        '"eui64"',
+        '"subnqn"',
+    )
+    for value in forbidden_hex:
+        assert bytes.fromhex(value).decode("ascii") not in lowered
+    for key in forbidden_keys:
+        assert key not in lowered

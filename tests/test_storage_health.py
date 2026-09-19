@@ -182,3 +182,54 @@ def test_standby_disk_keeps_last_known_values(tmp_path: Path) -> None:
     standby = json.dumps({"smartctl": {"messages": [{"string": "Device is in STANDBY mode"}]}})
     result = read_smart_devices(tmp_path, smart_runner(standby), 2.0, previous)
     assert result == previous
+
+
+PROBE_FIXTURE = Path(__file__).parent / "fixtures" / "drive_temperature_probe_pi5.json"
+
+
+def test_privacy_scrubbed_drive_probe_returns_all_drive_temperatures(tmp_path: Path) -> None:
+    fixture = json.loads(PROBE_FIXTURE.read_text())
+    for name in fixture["block_devices"]:
+        (tmp_path / name / "device").mkdir(parents=True)
+
+    calls: list[list[str]] = []
+
+    def runner(arguments: list[str], _timeout: float) -> str:
+        calls.append(arguments)
+        if arguments == ["smartctl", "--scan-open"]:
+            return fixture["smartctl_scan"]
+        return json.dumps(fixture["smart"][arguments[-1]])
+
+    result = read_smart_devices(tmp_path, runner, 2.0)
+    assert result == [
+        {"device": "sda", "status": "healthy", "temperature_c": 29},
+        {"device": "sdb", "status": "healthy", "temperature_c": 28},
+        {
+            "device": "nvme0n1",
+            "status": "healthy",
+            "temperature_c": 20,
+            "remaining_life_percent": 98.0,
+        },
+        {
+            "device": "nvme1n1",
+            "status": "healthy",
+            "temperature_c": 32,
+            "remaining_life_percent": 75.0,
+        },
+    ]
+    assert calls == [
+        ["smartctl", "--scan-open"],
+        ["smartctl", "-n", "standby", "-a", "-j", "-d", "sat", "/dev/sda"],
+        ["smartctl", "-n", "standby", "-a", "-j", "-d", "sat", "/dev/sdb"],
+        ["smartctl", "-n", "standby", "-a", "-j", "-d", "nvme", "/dev/nvme0"],
+        ["smartctl", "-n", "standby", "-a", "-j", "-d", "nvme", "/dev/nvme1"],
+    ]
+
+
+def test_probe_fixture_preserves_sat_nonzero_exit_json_evidence() -> None:
+    fixture = json.loads(PROBE_FIXTURE.read_text())
+    for endpoint in ("/dev/sda", "/dev/sdb"):
+        payload = fixture["smart"][endpoint]
+        assert payload["smartctl"]["exit_status"] == 4
+        assert payload["smart_status"]["passed"] is True
+        assert isinstance(payload["temperature"]["current"], int)

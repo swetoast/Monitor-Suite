@@ -1,3 +1,28 @@
+## 2.8.0
+
+- Split the network API and privileged SMART collection into separate services.
+- Restored the unprivileged `monitor-suite` Uvicorn service.
+- Added a root-only, networkless SMART collector and 15-minute systemd timer.
+- Added atomic sanitized SMART cache handoff through `/run/monitor-suite-agent/smart.json`.
+- Removed direct SMART execution from the API sampler.
+
+## 2.7.0
+
+- Added installer API readiness verification before any successful installation summary is printed.
+- Added a startup grace check that requires the systemd service to remain active.
+- Added authenticated local `/health` verification with no redirects, exact JSON contract checking, and installed-version matching.
+- Added concise failure classification for unreachable endpoints, redirects, authentication errors, HTTP errors, invalid JSON, unrelated services occupying the configured port, and version mismatches.
+- Added token-safe systemd status and recent journal diagnostics when installation verification fails.
+- Added regression coverage for valid Monitor Suite Agent health responses and competing unrelated HTTP or JSON services.
+
+## 2.6.0
+
+- Changed the systemd service to run as root so SMART through USB bridges, NVMe controllers, Linux MD RAID, and Raspberry Pi hardware telemetry use the same access context as the verified probe.
+- Retained the existing systemd hardening controls while removing the obsolete service account and supplementary groups.
+- Changed installation ownership to `root:root` and protected the API configuration with mode `0600`.
+- Added a privacy-scrubbed Raspberry Pi 5 drive-temperature fixture derived from the verified probe.
+- Added end-to-end fixture regression coverage for two SAT drives and two NVMe drives, including temperatures, NVMe remaining life, endpoint mapping, command arguments, and valid SAT JSON with smartctl exit status 4.
+
 ## 2.5.1
 
 - Fixed `/status` returning HTTP 500 after RAID SMART aggregation was removed.

@@ -1,20 +1,18 @@
 [Unit]
-Description=Monitor Suite Agent
-After=network-online.target monitor-suite-smart.service
-Wants=network-online.target
+Description=Monitor Suite SMART collector
 
 [Service]
-Type=simple
-User=monitor-suite
+Type=oneshot
+User=root
 Group=monitor-suite
-EnvironmentFile=/etc/monitor-suite-agent.env
+RuntimeDirectory=monitor-suite-agent
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 WorkingDirectory=/opt/monitor-suite-agent
-ExecStart=/opt/monitor-suite-agent/.venv/bin/monitor-suite-agent
-Restart=on-failure
-RestartSec=5
+ExecStart=/opt/monitor-suite-agent/.venv/bin/monitor-suite-smart-collector
+UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
-PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ProtectKernelTunables=true
@@ -27,7 +25,3 @@ RestrictRealtime=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
 SystemCallArchitectures=native
-UMask=0077
-
-[Install]
-WantedBy=multi-user.target

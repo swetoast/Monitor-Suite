@@ -127,7 +127,7 @@ The installer will:
 
 1. Check and install required Debian packages.
 2. Download Monitor Suite Agent from GitHub.
-3. Create a dedicated `monitor-suite` service account.
+3. Install a hardened systemd service that runs as root so SMART, NVMe, RAID, and Raspberry Pi hardware telemetry are consistently readable.
 4. Create an isolated Python environment.
 5. Generate a random API token.
 6. Install and start the systemd service.

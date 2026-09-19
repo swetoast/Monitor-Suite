@@ -2,7 +2,7 @@
 
 This roadmap contains only the remaining agreed work for Monitor Suite Agent. Values that are collected internally do not automatically become API fields, Home Assistant entities, or entity attributes.
 
-## 1. RAID health (implemented and refined through 2.5.1)
+## 1. RAID health (implemented and refined through 2.6.0)
 
 The supplied Raspberry Pi 5 RAID and SMART probe is preserved as `tests/fixtures/raid_smart_probe_pi5.txt` and is authoritative regression evidence for the initial implementation.
 
@@ -35,7 +35,7 @@ During an active RAID operation only, add `progress` with unit `%`. Do not expos
 
 The verified fixture contains one clean RAID 0 array, `md0`, with two expected and active members, zero failed members, and no redundancy. SMART health remains attached to each physical member disk and is not aggregated into the RAID array.
 
-## 2. SMART monitoring (implemented and refined through 2.5.1)
+## 2. SMART monitoring (implemented and refined through 2.6.0)
 
 SMART monitoring must expose only values that provide clear, independent user value. SMART data that is useful only for calculating health remains internal.
 
@@ -184,7 +184,7 @@ The following work is approved before the Home Assistant integration is treated 
 - `install.sh` installs, updates, reports status, and uninstalls from `https://github.com/swetoast/Monitor-Suite.git`.
 - Direct authenticated access from the NAS over the trusted LAN is the normal deployment.
 
-## 7. Installer API readiness verification
+## 7. Installer API readiness verification (completed in 2.7.0)
 
 The live installation on September 19, 2026 exposed a false-success case: systemd briefly reported the service as active while Uvicorn was entering a restart loop because another process already owned the configured port. The installer then printed the status and health URLs even though those URLs were served by the unrelated process.
 
@@ -203,4 +203,4 @@ Required acceptance checks:
 9. Include the relevant systemd status or recent journal context without printing the API token.
 10. Add regression coverage for a competing process that already owns the configured port and returns an unrelated redirect or JSON response.
 
-This is the only newly recorded daemon roadmap item. The Home Assistant integration remains the separate consumer-side roadmap item.
+Implemented in 2.7.0 with startup-grace validation, authenticated health-contract verification, version matching, failure classification, token-safe diagnostics, and regression coverage for unrelated processes occupying the configured port. The Home Assistant integration remains the only separate consumer-side roadmap item.

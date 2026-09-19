@@ -688,6 +688,36 @@ def read_smart_devices(
     return devices
 
 
+def read_smart_cache(path: Path, max_age_seconds: float, now: datetime) -> list[dict[str, Any]]:
+    """Read the sanitized SMART cache produced by the privileged collector."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        generated = datetime.fromisoformat(str(data["generated_at"]).replace("Z", "+00:00"))
+        devices = data["devices"]
+        if generated.tzinfo is None or (now - generated).total_seconds() > max_age_seconds:
+            return []
+        if not isinstance(devices, list):
+            return []
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return []
+    allowed = {"device", "status", "temperature_c", "remaining_life_percent"}
+    statuses = {"healthy", "warning", "failed", "testing", "unavailable"}
+    clean: list[dict[str, Any]] = []
+    for item in devices:
+        if not isinstance(item, dict) or set(item) - allowed:
+            continue
+        device, status = item.get("device"), item.get("status")
+        if not isinstance(device, str) or not re.fullmatch(r"(?:sd[a-z]+|nvme\d+n\d+)", device):
+            continue
+        if status not in statuses:
+            continue
+        value = {"device": device, "status": status, "temperature_c": item.get("temperature_c")}
+        if item.get("remaining_life_percent") is not None:
+            value["remaining_life_percent"] = item["remaining_life_percent"]
+        clean.append(value)
+    return clean
+
+
 @dataclass(slots=True)
 class ProbeHealth:
     """Internal availability state for one probe group."""
@@ -737,11 +767,9 @@ class TelemetrySampler:
         self.settings = settings
         self.paths = paths or Paths()
         self._run_command = command_runner
-        self._run_smart = smart_runner
         self._monotonic = monotonic
         self._now = now
         self._task: asyncio.Task[None] | None = None
-        self._smart_task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self._snapshot: dict[str, Any] | None = None
         self._last_success_monotonic: float | None = None
@@ -757,8 +785,6 @@ class TelemetrySampler:
         self._power_schedule = ProbeSchedule()
         self._resource_schedule = ProbeSchedule()
         self._raid_schedule = ProbeSchedule()
-        self._smart_schedule = ProbeSchedule()
-        self._smart_failures = 0
         self._probe_health = {
             name: ProbeHealth()
             for name in ("snapshot", "fast", "thermal", "cooling", "power", "resources", "raid", "smart")
@@ -848,22 +874,20 @@ class TelemetrySampler:
         except Exception:
             _LOGGER.exception("Initial telemetry collection failed; daemon remains in starting state")
         self._task = asyncio.create_task(self._run(), name="monitor-suite-sampler")
-        self._smart_task = asyncio.create_task(self._run_smart_loop(), name="monitor-suite-smart")
 
     async def stop(self) -> None:
         """Stop the sampler cleanly."""
         self._stop.set()
-        for task in (self._task, self._smart_task):
+        for task in (self._task,):
             if task:
                 task.cancel()
-        for task in (self._task, self._smart_task):
+        for task in (self._task,):
             if task:
                 try:
                     await task
                 except asyncio.CancelledError:
                     pass
         self._task = None
-        self._smart_task = None
 
     async def _run(self) -> None:
         while not self._stop.is_set():
@@ -878,44 +902,6 @@ class TelemetrySampler:
                 await asyncio.wait_for(self._stop.wait(), timeout=delay)
             except asyncio.TimeoutError:
                 pass
-
-    async def _run_smart_loop(self) -> None:
-        """Collect SMART independently so slow disks never block fast telemetry."""
-        while not self._stop.is_set():
-            try:
-                values = await asyncio.to_thread(
-                    read_smart_devices,
-                    self.paths.block_root,
-                    self._run_smart,
-                    self.settings.command_timeout_seconds,
-                    self._smart_values,
-                )
-                self._smart_values = values
-                unavailable = any(item["status"] == "unavailable" for item in values)
-                available = not unavailable
-                self._smart_failures = self._smart_failures + 1 if unavailable else 0
-                self._record_probe("smart", available, self._monotonic())
-            except Exception:
-                self._smart_failures += 1
-                self._record_probe("smart", False, self._monotonic())
-                if self._probe_health["smart"].consecutive_failures == 1:
-                    _LOGGER.exception("SMART collection failed")
-            delay = self._smart_retry_delay()
-            try:
-                await asyncio.wait_for(self._stop.wait(), timeout=delay)
-            except asyncio.TimeoutError:
-                pass
-
-    def _smart_retry_delay(self) -> float:
-        """Return bounded retry backoff or the normal SMART interval."""
-        if self._smart_failures <= 0:
-            return self.settings.smart_sample_interval_seconds
-        steps = (1.0, 2.0, 5.0, 15.0)
-        multiplier = steps[min(self._smart_failures - 1, len(steps) - 1)]
-        return min(
-            self.settings.smart_sample_interval_seconds,
-            self.settings.smart_retry_interval_seconds * multiplier,
-        )
 
     async def collect_once(self) -> dict[str, Any]:
         """Collect one snapshot and account for whole-cycle success or failure."""
@@ -1069,6 +1055,9 @@ class TelemetrySampler:
             mono,
         )
 
+
+        self._smart_values = read_smart_cache(self.settings.smart_cache_file, self.settings.smart_cache_max_age_seconds, self._now())
+        self._record_probe("smart", bool(self._smart_values), mono)
 
         if self._raid_schedule.due(mono):
             self._raid_values = read_raid_arrays(self.paths.block_root)

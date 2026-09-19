@@ -6,8 +6,10 @@ BRANCH=${MONITOR_SUITE_BRANCH:-main}
 INSTALL_DIR=${MONITOR_SUITE_INSTALL_DIR:-/opt/monitor-suite-agent}
 CONFIG_FILE=${MONITOR_SUITE_CONFIG_FILE:-/etc/monitor-suite-agent.env}
 SERVICE_FILE=${MONITOR_SUITE_SERVICE_FILE:-/etc/systemd/system/monitor-suite-agent.service}
-SERVICE_USER=${MONITOR_SUITE_SERVICE_USER:-monitor-suite}
 SERVICE_NAME=monitor-suite-agent.service
+SMART_SERVICE_NAME=monitor-suite-smart.service
+SMART_TIMER_NAME=monitor-suite-smart.timer
+SERVICE_USER=${MONITOR_SUITE_SERVICE_USER:-monitor-suite}
 ACTION=${1:-install}
 CREATED_TOKEN=
 
@@ -38,9 +40,6 @@ validate_paths() {
     case "$SERVICE_FILE" in /*) ;; *) fail "MONITOR_SUITE_SERVICE_FILE must be an absolute path." ;; esac
     case "$INSTALL_DIR$CONFIG_FILE$SERVICE_FILE" in
         *[!A-Za-z0-9_./-]*) fail "Installation, configuration, and service paths may use only letters, numbers, _, ., /, and -." ;;
-    esac
-    case "$SERVICE_USER" in
-        ""|*[!A-Za-z0-9_-]*) fail "MONITOR_SUITE_SERVICE_USER contains unsupported characters." ;;
     esac
     case "$BRANCH" in
         ""|-*) fail "MONITOR_SUITE_BRANCH must be a branch name and cannot begin with -." ;;
@@ -84,17 +83,6 @@ read_config_value() {
     sed -n "s/^${key}=//p" "$CONFIG_FILE" | tail -n 1
 }
 
-create_user() {
-    if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-        useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
-    fi
-    for group in video disk; do
-        if getent group "$group" >/dev/null 2>&1; then
-            usermod -a -G "$group" "$SERVICE_USER"
-        fi
-    done
-}
-
 install_source() {
     if [ -d "$INSTALL_DIR/.git" ]; then
         say "Updating source in $INSTALL_DIR"
@@ -107,20 +95,22 @@ install_source() {
         say "Downloading Monitor Suite Agent"
         git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$INSTALL_DIR"
     fi
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+    chown -R root:root "$INSTALL_DIR"
 }
 
 install_python() {
     say "Installing the locked Python environment"
     if [ ! -x "$INSTALL_DIR/.venv/bin/python" ]; then
-        su -s /bin/sh -c "python3 -m venv '$INSTALL_DIR/.venv'" "$SERVICE_USER"
+        python3 -m venv "$INSTALL_DIR/.venv"
     fi
-    su -s /bin/sh -c "'$INSTALL_DIR/.venv/bin/python' -m pip install --disable-pip-version-check --requirement '$INSTALL_DIR/requirements.lock'" "$SERVICE_USER"
-    su -s /bin/sh -c "'$INSTALL_DIR/.venv/bin/python' -m pip install --disable-pip-version-check --no-deps --force-reinstall '$INSTALL_DIR'" "$SERVICE_USER"
+    "$INSTALL_DIR/.venv/bin/python" -m pip install --disable-pip-version-check --requirement "$INSTALL_DIR/requirements.lock"
+    "$INSTALL_DIR/.venv/bin/python" -m pip install --disable-pip-version-check --no-deps --force-reinstall "$INSTALL_DIR"
 }
 
 create_config() {
     if [ -f "$CONFIG_FILE" ]; then
+        chown root:"$SERVICE_USER" "$CONFIG_FILE"
+        chmod 0640 "$CONFIG_FILE"
         say "Preserving existing configuration: $CONFIG_FILE"
         return
     fi
@@ -141,64 +131,126 @@ EOF
 }
 
 create_service() {
-    supplementary=
-    for group in video disk; do
-        if getent group "$group" >/dev/null 2>&1; then
-            supplementary="$supplementary $group"
-        fi
-    done
-    cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=Monitor Suite Agent
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$SERVICE_USER
-Group=$SERVICE_USER
-SupplementaryGroups=$supplementary
-EnvironmentFile=$CONFIG_FILE
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/.venv/bin/monitor-suite-agent
-Restart=on-failure
-RestartSec=5
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-ProtectKernelTunables=true
-ProtectKernelModules=true
-ProtectControlGroups=true
-ProtectClock=true
-ProtectHostname=true
-RestrictSUIDSGID=true
-RestrictRealtime=true
-LockPersonality=true
-MemoryDenyWriteExecute=true
-SystemCallArchitectures=native
-UMask=0077
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    chmod 0644 "$SERVICE_FILE"
+    install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-agent.service" "$SERVICE_FILE"
+    sed -i "s|/opt/monitor-suite-agent|$INSTALL_DIR|g; s|/etc/monitor-suite-agent.env|$CONFIG_FILE|g; s|User=monitor-suite|User=$SERVICE_USER|g; s|Group=monitor-suite|Group=$SERVICE_USER|g" "$SERVICE_FILE"
+    install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-smart.service" "/etc/systemd/system/$SMART_SERVICE_NAME"
+    sed -i "s|/opt/monitor-suite-agent|$INSTALL_DIR|g; s|Group=monitor-suite|Group=$SERVICE_USER|g" "/etc/systemd/system/$SMART_SERVICE_NAME"
+    install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-smart.timer" "/etc/systemd/system/$SMART_TIMER_NAME"
     systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME" >/dev/null
+    systemctl enable "$SMART_TIMER_NAME" "$SERVICE_NAME" >/dev/null
+    systemctl start "$SMART_SERVICE_NAME"
     systemctl restart "$SERVICE_NAME"
+    systemctl restart "$SMART_TIMER_NAME"
+}
+
+service_diagnostics() {
+    systemctl --no-pager --full status "$SERVICE_NAME" >&2 || true
+    if command -v journalctl >/dev/null 2>&1; then
+        journalctl --no-pager --quiet --unit "$SERVICE_NAME" --lines 20 >&2 || true
+    fi
 }
 
 wait_for_service() {
     attempts=0
     while [ "$attempts" -lt 20 ]; do
         if systemctl is-active --quiet "$SERVICE_NAME"; then
-            return 0
+            sleep 2
+            if systemctl is-active --quiet "$SERVICE_NAME"; then
+                return 0
+            fi
         fi
         attempts=$((attempts + 1))
         sleep 1
     done
-    systemctl --no-pager --full status "$SERVICE_NAME" || true
-    fail "The service did not become active."
+    service_diagnostics
+    fail "The service did not remain active after startup."
+}
+
+verify_api() {
+    host=$(read_config_value MONITOR_SUITE_HOST || true)
+    port=$(read_config_value MONITOR_SUITE_PORT || true)
+    token=$(read_config_value MONITOR_SUITE_API_KEY || true)
+    [ -n "$host" ] || host=0.0.0.0
+    [ -n "$port" ] || port=5000
+    [ -n "$token" ] || fail "No API token was found in $CONFIG_FILE"
+    case "$host" in
+        0.0.0.0|::|\[::\]) request_host=127.0.0.1 ;;
+        *) request_host=$host ;;
+    esac
+    expected_version=$("$INSTALL_DIR/.venv/bin/python" -c 'from monitor_suite_agent import __version__; print(__version__)')
+
+    MONITOR_SUITE_VERIFY_URL="http://$request_host:$port/health" \
+    MONITOR_SUITE_VERIFY_TOKEN="$token" \
+    MONITOR_SUITE_VERIFY_VERSION="$expected_version" \
+    "$INSTALL_DIR/.venv/bin/python" - <<'PYVERIFY'
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+
+url = os.environ["MONITOR_SUITE_VERIFY_URL"]
+token = os.environ["MONITOR_SUITE_VERIFY_TOKEN"]
+expected_version = os.environ["MONITOR_SUITE_VERIFY_VERSION"]
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        return None
+
+opener = urllib.request.build_opener(NoRedirect)
+request = urllib.request.Request(url, headers={"X-API-Key": token})
+response = None
+for attempt in range(20):
+    try:
+        response = opener.open(request, timeout=2)
+        break
+    except urllib.error.HTTPError as error:
+        if error.code in (301, 302, 303, 307, 308):
+            print("API verification failed: the health endpoint returned a redirect.")
+            raise SystemExit(21)
+        if error.code in (401, 403):
+            print("API verification failed: the health endpoint rejected the configured API token.")
+            raise SystemExit(22)
+        print(f"API verification failed: the health endpoint returned HTTP {error.code}.")
+        raise SystemExit(23)
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        if attempt == 19:
+            print("API verification failed: the health endpoint could not be reached.")
+            raise SystemExit(20)
+        time.sleep(1)
+
+if response is None or response.status != 200:
+    print("API verification failed: the health endpoint did not return HTTP 200.")
+    raise SystemExit(23)
+
+try:
+    payload = json.loads(response.read().decode("utf-8"))
+except (UnicodeDecodeError, json.JSONDecodeError):
+    print("API verification failed: the health endpoint did not return valid JSON.")
+    raise SystemExit(24)
+
+if not isinstance(payload, dict):
+    print("API verification failed: the health endpoint did not return a JSON object.")
+    raise SystemExit(24)
+
+if (
+    payload.get("status") not in {"starting", "ok", "degraded", "stale"}
+    or not isinstance(payload.get("sample_available"), bool)
+    or not isinstance(payload.get("version"), str)
+    or set(payload) != {"status", "version", "sample_available"}
+):
+    print("API verification failed: the response is not the Monitor Suite Agent health contract. Another process may own the configured port.")
+    raise SystemExit(25)
+
+if payload["version"] != expected_version:
+    print(
+        "API verification failed: version mismatch "
+        f"(expected {expected_version}, received {payload['version']})."
+    )
+    raise SystemExit(26)
+
+print(f"Verified Monitor Suite Agent {expected_version} at {url}")
+PYVERIFY
 }
 
 show_token() {
@@ -251,15 +303,21 @@ install_or_update() {
     need_root
     validate_paths
     install_dependencies
+    if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+        useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+    fi
     need_command git
     need_command python3
     need_command systemctl
-    create_user
     install_source
     install_python
     create_config
     create_service
     wait_for_service
+    if ! verify_api; then
+        service_diagnostics
+        fail "Installation verification failed. The success summary was not printed."
+    fi
     show_summary
 }
 
@@ -270,7 +328,8 @@ status_agent() {
 
 uninstall_agent() {
     need_root
-    systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+    systemctl disable --now "$SERVICE_NAME" "$SMART_TIMER_NAME" 2>/dev/null || true
+    rm -f "/etc/systemd/system/$SMART_SERVICE_NAME" "/etc/systemd/system/$SMART_TIMER_NAME"
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload
     rm -rf "$INSTALL_DIR"
@@ -287,7 +346,6 @@ Environment overrides:
   MONITOR_SUITE_BRANCH         Git branch or tag (default: main)
   MONITOR_SUITE_INSTALL_DIR    Installation directory
   MONITOR_SUITE_CONFIG_FILE    Configuration file
-  MONITOR_SUITE_SERVICE_USER   Service account
 EOF
 }
 

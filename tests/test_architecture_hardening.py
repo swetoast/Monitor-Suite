@@ -10,12 +10,10 @@ from monitor_suite_agent.models import HealthResponse, StatusResponse
 from monitor_suite_agent.telemetry import TelemetrySampler
 
 
-def test_smart_retry_backoff_is_bounded() -> None:
-    sampler = TelemetrySampler(Settings(smart_retry_interval_seconds=60, smart_sample_interval_seconds=900))
-    expected = (900, 60, 120, 300, 900, 900)
-    for failures, delay in enumerate(expected):
-        sampler._smart_failures = failures
-        assert sampler._smart_retry_delay() == delay
+def test_smart_cache_has_bounded_freshness() -> None:
+    settings = Settings()
+    assert settings.smart_cache_max_age_seconds == 1800.0
+    assert str(settings.smart_cache_file) == "/run/monitor-suite-agent/smart.json"
 
 
 def test_health_degrades_after_repeated_expected_smart_failures() -> None:
@@ -130,7 +128,7 @@ def test_start_survives_initial_collection_failure() -> None:
         try:
             assert sampler.health() == {"status": "starting", "sample_available": False}
             assert sampler._task is not None
-            assert sampler._smart_task is not None
+            assert not hasattr(sampler, "_smart_task")
         finally:
             await sampler.stop()
 

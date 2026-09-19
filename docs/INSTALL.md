@@ -14,7 +14,7 @@ The installer:
 
 - installs missing Debian or Raspberry Pi OS packages with `apt-get`
 - downloads the current `main` branch from GitHub
-- creates the dedicated `monitor-suite` service account
+- installs a hardened root systemd service for consistent SMART, NVMe, RAID, and Raspberry Pi hardware access
 - creates an isolated Python virtual environment
 - installs the locked Python dependencies
 - generates a random 256-bit API token
@@ -52,7 +52,7 @@ The installer creates:
 /etc/monitor-suite-agent.env
 ```
 
-with permissions restricted to root and the service group. New installations use:
+with permissions restricted to root. New installations use:
 
 ```text
 MONITOR_SUITE_HOST=0.0.0.0
@@ -151,3 +151,8 @@ X-API-Key: <api-token>
 ```
 
 Restrict TCP port 5000 so only `<homeassistant-server>` at `<nas-ip-address>` can reach it. Plain HTTP is intended only for the explicitly trusted private LAN.
+
+
+The installer preserves the existing API token during updates.
+
+Before reporting a successful installation, the installer now verifies the local authenticated `/health` endpoint. It requires HTTP 200 without redirects, the exact Monitor Suite Agent health response contract, and a version matching the installed package. A service that exits after briefly becoming active, an occupied port, an authentication failure, invalid JSON, an unrelated response, or a version mismatch prevents the success message and prints concise service diagnostics without printing the API token.

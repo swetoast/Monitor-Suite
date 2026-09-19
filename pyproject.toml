@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "monitor-suite-agent"
-version = "2.5.1"
+version = "2.8.0"
 description = "Trusted-LAN Raspberry Pi telemetry agent for Monitor Suite"
 requires-python = ">=3.11"
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
 
 [project.scripts]
 monitor-suite-agent = "monitor_suite_agent.__main__:main"
+monitor-suite-smart-collector = "monitor_suite_agent.smart_collector:main"
 
 [tool.setuptools]
 packages = ["monitor_suite_agent"]

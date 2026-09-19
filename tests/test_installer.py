@@ -2,6 +2,10 @@
 
 from pathlib import Path
 import os
+import json
+import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import subprocess
 
 
@@ -139,3 +143,143 @@ def test_installer_rejects_systemd_directive_injection(tmp_path: Path) -> None:
     )
     assert result.returncode != 0
     assert "may use only" in result.stderr
+
+
+
+def test_api_service_is_unprivileged_and_smart_collector_is_root() -> None:
+    installer = INSTALLER.read_text()
+    api = (INSTALLER.parent / "deploy/monitor-suite-agent.service").read_text()
+    collector = (INSTALLER.parent / "deploy/monitor-suite-smart.service").read_text()
+    timer = (INSTALLER.parent / "deploy/monitor-suite-smart.timer").read_text()
+    assert "User=monitor-suite" in api
+    assert "Group=monitor-suite" in api
+    assert "PrivateDevices=true" in api
+    assert "User=root" in collector
+    assert "Group=monitor-suite" in collector
+    assert "monitor-suite-smart-collector" in collector
+    assert "OnUnitActiveSec=15min" in timer
+    assert "useradd --system" in installer
+
+
+def test_unprivileged_service_keeps_systemd_hardening() -> None:
+    service = (INSTALLER.parent / "deploy/monitor-suite-agent.service").read_text()
+    for directive in (
+        "NoNewPrivileges=true",
+        "PrivateTmp=true",
+        "ProtectSystem=strict",
+        "ProtectHome=true",
+        "ProtectKernelTunables=true",
+        "ProtectKernelModules=true",
+        "ProtectControlGroups=true",
+        "RestrictSUIDSGID=true",
+        "LockPersonality=true",
+        "MemoryDenyWriteExecute=true",
+    ):
+        assert directive in service
+
+
+
+def test_existing_configuration_is_preserved_and_hardened() -> None:
+    installer = INSTALLER.read_text()
+    existing = installer.index('if [ -f "$CONFIG_FILE" ]')
+    created = installer.index('CREATED_TOKEN=$(generate_token)')
+    block = installer[existing:created]
+    assert 'chown root:"$SERVICE_USER" "$CONFIG_FILE"' in block
+    assert 'chmod 0640 "$CONFIG_FILE"' in block
+    assert 'return' in block
+
+
+
+def verifier_program() -> str:
+    installer = INSTALLER.read_text()
+    match = re.search(r"<<'PYVERIFY'\n(.*?)\nPYVERIFY", installer, re.DOTALL)
+    assert match is not None
+    return match.group(1)
+
+
+def run_verifier(status: int, body: object, *, location: str | None = None) -> subprocess.CompletedProcess[str]:
+    payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            assert self.path == "/health"
+            assert self.headers.get("X-API-Key") == "test-token"
+            self.send_response(status)
+            if location is not None:
+                self.send_header("Location", location)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        return subprocess.run(
+            ["python3", "-c", verifier_program()],
+            env={
+                **os.environ,
+                "MONITOR_SUITE_VERIFY_URL": f"http://127.0.0.1:{server.server_port}/health",
+                "MONITOR_SUITE_VERIFY_TOKEN": "test-token",
+                "MONITOR_SUITE_VERIFY_VERSION": "2.7.0",
+            },
+            text=True,
+            capture_output=True,
+        )
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+
+def test_api_verifier_accepts_exact_health_contract() -> None:
+    result = run_verifier(
+        200,
+        {"status": "ok", "version": "2.7.0", "sample_available": True},
+    )
+    assert result.returncode == 0
+    assert "Verified Monitor Suite Agent 2.7.0" in result.stdout
+    assert "test-token" not in result.stdout + result.stderr
+
+
+def test_api_verifier_rejects_unrelated_json_on_occupied_port() -> None:
+    result = run_verifier(200, {"service": "unrelated", "status": "ok"})
+    assert result.returncode == 25
+    assert "Another process may own the configured port" in result.stdout
+    assert "test-token" not in result.stdout + result.stderr
+
+
+def test_api_verifier_rejects_redirect_from_unrelated_process() -> None:
+    result = run_verifier(302, {}, location="/login")
+    assert result.returncode == 21
+    assert "returned a redirect" in result.stdout
+
+
+def test_api_verifier_distinguishes_authentication_and_version_failures() -> None:
+    auth = run_verifier(401, {"detail": "unauthorized"})
+    assert auth.returncode == 22
+    assert "rejected the configured API token" in auth.stdout
+
+    version = run_verifier(
+        200,
+        {"status": "ok", "version": "9.9.9", "sample_available": True},
+    )
+    assert version.returncode == 26
+    assert "version mismatch" in version.stdout
+
+
+def test_api_verifier_rejects_non_json_response() -> None:
+    result = run_verifier(200, b"not-json")
+    assert result.returncode == 24
+    assert "did not return valid JSON" in result.stdout
+
+
+def test_success_summary_is_gated_by_service_and_api_verification() -> None:
+    installer = INSTALLER.read_text()
+    sequence = installer[installer.index("install_or_update() {"):installer.index("status_agent() {")]
+    assert sequence.index("wait_for_service") < sequence.index("verify_api")
+    assert sequence.index("verify_api") < sequence.index("show_summary")
+    assert 'if ! verify_api; then' in sequence
