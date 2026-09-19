@@ -51,6 +51,23 @@
 
 # Changelog
 
+## 2.8.3
+
+- Rewrote the SMART service environment-file path when a custom installer configuration path is used.
+- Kept the SMART collector sandbox at `ProtectSystem=strict`.
+- Preserved Linux network `operstate=unknown` as an explicit API state.
+- Made `booted_at` stable across ordinary sampling jitter while allowing correction after wall-clock synchronization.
+
+## 2.8.2
+
+- Prevented `/status` validation failures when Linux reports an unknown network operstate.
+- Activated periodic NVMe composite-temperature reads from hwmon in the API sampler.
+- Made the privileged SMART collector honor `MONITOR_SUITE_SMART_CACHE` from the shared environment file.
+- Isolated malformed or unsupported SMART entries instead of discarding every valid device.
+- Added fan RPM support on systems that expose a tachometer without a cooling-device state.
+- Stabilized `booted_at` for the lifetime of the daemon process.
+- Updated release metadata and simplified network-interface discovery.
+
 ## 2.4.4
 
 - Recorded installer API readiness verification as the remaining daemon roadmap item.

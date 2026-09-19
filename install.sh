@@ -140,7 +140,7 @@ create_service() {
     install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-agent.service" "$SERVICE_FILE"
     sed -i "s|/opt/monitor-suite-agent|$INSTALL_DIR|g; s|/etc/monitor-suite-agent.env|$CONFIG_FILE|g; s|User=monitor-suite|User=$SERVICE_USER|g; s|Group=monitor-suite|Group=$SERVICE_USER|g" "$SERVICE_FILE"
     install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-smart.service" "/etc/systemd/system/$SMART_SERVICE_NAME"
-    sed -i "s|/opt/monitor-suite-agent|$INSTALL_DIR|g; s|Group=monitor-suite|Group=$SERVICE_USER|g" "/etc/systemd/system/$SMART_SERVICE_NAME"
+    sed -i "s|/opt/monitor-suite-agent|$INSTALL_DIR|g; s|/etc/monitor-suite-agent.env|$CONFIG_FILE|g; s|Group=monitor-suite|Group=$SERVICE_USER|g" "/etc/systemd/system/$SMART_SERVICE_NAME"
     install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-smart.timer" "/etc/systemd/system/$SMART_TIMER_NAME"
     systemctl daemon-reload
     systemctl enable "$SMART_TIMER_NAME" "$SERVICE_NAME" >/dev/null

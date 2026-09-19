@@ -9,6 +9,7 @@ RuntimeDirectory=monitor-suite-agent
 RuntimeDirectoryMode=0750
 RuntimeDirectoryPreserve=yes
 WorkingDirectory=/opt/monitor-suite-agent
+EnvironmentFile=/etc/monitor-suite-agent.env
 ExecStart=/opt/monitor-suite-agent/.venv/bin/monitor-suite-smart-collector
 UMask=0027
 NoNewPrivileges=true

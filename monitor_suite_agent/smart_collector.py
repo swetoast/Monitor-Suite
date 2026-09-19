@@ -15,6 +15,11 @@ from .telemetry import Paths, read_smart_devices, run_smartctl
 DEFAULT_CACHE = Path("/run/monitor-suite-agent/smart.json")
 
 
+def configured_cache() -> Path:
+    """Return the cache path shared with the API service configuration."""
+    return Path(os.getenv("MONITOR_SUITE_SMART_CACHE", str(DEFAULT_CACHE)))
+
+
 def _previous_devices(path: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -61,7 +66,7 @@ def collect(cache: Path = DEFAULT_CACHE, timeout: float = 10.0) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect sanitized SMART health data")
-    parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
+    parser.add_argument("--cache", type=Path, default=configured_cache())
     parser.add_argument("--timeout", type=float, default=10.0)
     arguments = parser.parse_args()
     return collect(arguments.cache, arguments.timeout)

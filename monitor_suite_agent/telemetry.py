@@ -262,6 +262,26 @@ def booted_at(uptime_seconds: float | None, now: datetime | None = None) -> str 
     return (current - timedelta(seconds=uptime_seconds)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def corrected_booted_at(
+    previous: str | None,
+    uptime_seconds: float | None,
+    now: datetime,
+    correction_threshold_seconds: float = 5.0,
+) -> str | None:
+    """Keep boot time stable while accepting real wall-clock corrections."""
+    candidate = booted_at(uptime_seconds, now)
+    if candidate is None or previous is None:
+        return candidate or previous
+    try:
+        old = datetime.fromisoformat(previous.replace("Z", "+00:00"))
+        new = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+    except ValueError:
+        return candidate
+    if abs((new - old).total_seconds()) >= correction_threshold_seconds:
+        return candidate
+    return previous
+
+
 def parse_pmic(text: str | None) -> dict[str, dict[str, float | None]]:
     """Parse and pair Raspberry Pi PMIC voltage/current channels."""
     rails: dict[str, dict[str, float | None]] = {}
@@ -353,7 +373,10 @@ def select_network_interface(net_root: Path, route_path: Path, preferred: str | 
                 except ValueError:
                     pass
     candidates = [default] if default else []
-    candidates.extend(path.name for path in sorted(net_root.iterdir()) if path.name != default) if net_root.exists() else None
+    if net_root.exists():
+        candidates.extend(
+            path.name for path in sorted(net_root.iterdir()) if path.name != default
+        )
     for name in candidates:
         if not name or name == "lo" or name.startswith(("docker", "br-", "veth")):
             continue
@@ -460,19 +483,24 @@ def discover_cooling(thermal_root: Path, hwmon_root: Path) -> tuple[Path | None,
 
 def read_cooling(cooling_path: Path | None, fan_path: Path | None) -> dict[str, str | int | None]:
     """Return meaningful cooling state and RPM."""
-    if cooling_path is None:
+    if cooling_path is None and fan_path is None:
         return {"state": "unavailable", "fan_speed_rpm": None}
-    try:
-        level = int((cooling_path / "cur_state").read_text())
-    except (OSError, ValueError):
-        return {"state": "unavailable", "fan_speed_rpm": None}
+    level: int | None = None
+    if cooling_path is not None:
+        try:
+            level = int((cooling_path / "cur_state").read_text())
+        except (OSError, ValueError):
+            pass
     rpm: int | None = None
     if fan_path is not None:
         try:
             rpm = int(fan_path.read_text())
         except (OSError, ValueError):
             pass
-    return {"state": "active" if level > 0 else "idle", "fan_speed_rpm": rpm}
+    if level is None and rpm is None:
+        return {"state": "unavailable", "fan_speed_rpm": None}
+    active = level > 0 if level is not None else bool(rpm and rpm > 0)
+    return {"state": "active" if active else "idle", "fan_speed_rpm": rpm}
 
 
 def _read_int(path: Path) -> int | None:
@@ -711,7 +739,7 @@ def _valid_number(value: Any, minimum: float, maximum: float) -> float | None:
 
 
 def _clean_smart_devices(value: Any) -> list[dict[str, Any]] | None:
-    """Validate and reduce a cache device list to the public SMART contract."""
+    """Validate cache entries while isolating unsupported device names."""
     if not isinstance(value, list):
         return None
     allowed = {"device", "status", "temperature_c", "remaining_life_percent"}
@@ -723,12 +751,11 @@ def _clean_smart_devices(value: Any) -> list[dict[str, Any]] | None:
             return None
         device = item.get("device")
         status = item.get("status")
-        if (
-            not isinstance(device, str)
-            or not re.fullmatch(r"(?:sd[a-z]+|nvme\d+n\d+)", device)
-            or device in seen
-            or status not in statuses
-        ):
+        if not isinstance(device, str):
+            return None
+        if not re.fullmatch(r"(?:sd[a-z]+|nvme\d+n\d+)", device):
+            continue
+        if device in seen or status not in statuses:
             return None
         temperature_raw = item.get("temperature_c")
         temperature = None
@@ -902,6 +929,7 @@ class TelemetrySampler:
         self._thermal_schedule = ProbeSchedule()
         self._power_schedule = ProbeSchedule()
         self._resource_schedule = ProbeSchedule()
+        self._nvme_temperature_schedule = ProbeSchedule()
         self._raid_schedule = ProbeSchedule()
         self._probe_health = {
             name: ProbeHealth()
@@ -921,6 +949,9 @@ class TelemetrySampler:
         self.max_frequency_mhz = read_max_frequency_mhz(self.paths.cpu_root)
         self.root_device = resolve_root_device(_read_text(self.paths.proc_mountinfo), self.paths.block_root)
         self.cooling_path, self.fan_path = discover_cooling(self.paths.thermal_root, self.paths.hwmon_root)
+        self._booted_at = booted_at(
+            parse_uptime_seconds(_read_text(self.paths.proc_uptime)), self._now()
+        )
         self.device = {
             "model": self.model,
             "operating_system": parse_os_release(_read_text(self.paths.os_release)),
@@ -1174,6 +1205,14 @@ class TelemetrySampler:
         )
 
 
+        if self._nvme_temperature_schedule.due(mono):
+            self._nvme_temperatures = read_nvme_temperatures(
+                self.paths.hwmon_root, self.paths.block_root
+            )
+            self._nvme_temperature_schedule.schedule(
+                mono, self.settings.slow_sample_interval_seconds
+            )
+
         cached_smart, smart_cache_current = read_smart_cache(
             self.settings.smart_cache_file,
             self.settings.smart_cache_max_age_seconds,
@@ -1206,13 +1245,16 @@ class TelemetrySampler:
             self._raid_schedule.schedule(mono, interval)
 
         if self._resource_schedule.due(mono):
+            self._booted_at = corrected_booted_at(
+                self._booted_at,
+                parse_uptime_seconds(_read_text(self.paths.proc_uptime)),
+                self._now(),
+            )
             resources_now = {
                 "memory": memory_status(_read_text(self.paths.proc_meminfo)),
                 "root_filesystem": filesystem_status(self.paths.root),
                 "network_meta": read_network_metadata(self.paths.net_root, self.interface),
-                "booted_at": booted_at(
-                    parse_uptime_seconds(_read_text(self.paths.proc_uptime)), self._now()
-                ),
+                "booted_at": self._booted_at,
             }
             resources_ok = (
                 resources_now["memory"]["total_bytes"] is not None

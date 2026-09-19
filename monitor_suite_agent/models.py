@@ -43,7 +43,7 @@ class CoolingStatus(APIModel):
 
 class NetworkStatus(APIModel):
     interface: str | None
-    status: Literal["up", "down", "unavailable"]
+    status: Literal["up", "down", "unknown", "unavailable"]
     link_speed_mbps: int | None
     download_bytes_per_second: int | None
     upload_bytes_per_second: int | None
