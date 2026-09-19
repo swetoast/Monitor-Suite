@@ -184,3 +184,24 @@ The following work is approved before the Home Assistant integration is treated 
 - Environment variables use the `MONITOR_SUITE_` prefix.
 - `install.sh` installs, updates, reports status, and uninstalls from `https://github.com/swetoast/Monitor-Suite.git`.
 - Direct authenticated access from the NAS over the trusted LAN is the normal deployment.
+
+## 7. Installer API readiness verification
+
+The live installation on September 19, 2026 exposed a false-success case: systemd briefly reported the service as active while Uvicorn was entering a restart loop because another process already owned the configured port. The installer then printed the status and health URLs even though those URLs were served by the unrelated process.
+
+Before printing `Monitor Suite Agent is installed and running.`, the installer must verify the installed API itself rather than relying only on the transient systemd unit state.
+
+Required acceptance checks:
+
+1. Confirm that `monitor-suite-agent.service` remains active after the initial startup grace period.
+2. Request the configured `/health` endpoint with the generated or preserved API token.
+3. Require HTTP 200 without accepting redirects.
+4. Require a JSON object rather than HTML or another response format.
+5. Verify that the response identifies Monitor Suite Agent through the expected health contract.
+6. Verify that the reported API version matches the version installed from the checked-out source.
+7. On failure, do not print the success message or endpoint summary.
+8. Show a concise diagnostic that distinguishes a port conflict, failed service, authentication error, invalid response, and version mismatch.
+9. Include the relevant systemd status or recent journal context without printing the API token.
+10. Add regression coverage for a competing process that already owns the configured port and returns an unrelated redirect or JSON response.
+
+This is the only newly recorded daemon roadmap item. The Home Assistant integration remains the separate consumer-side roadmap item.

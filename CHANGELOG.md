@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.4
+
+- Recorded installer API readiness verification as the remaining daemon roadmap item.
+- Documented the live false-success case caused by a competing process already owning the configured port.
+- Defined acceptance checks for authenticated health validation, response identity, version matching, diagnostics, and regression coverage.
+
 ## 2.4.3
 
 - Fixed installation from the repository by explicitly limiting setuptools packaging to `monitor_suite_agent`.
