@@ -304,7 +304,6 @@ See the [security guide](docs/SECURITY.md) for the complete deployment model.
 
 - [Installation and management](docs/INSTALL.md)
 - [Security model](docs/SECURITY.md)
-- [Planned Home Assistant entity design](docs/HOME_ASSISTANT_ENTITY_MODEL.md)
 - [Technical design](docs/DESIGN.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Release history](CHANGELOG.md)
