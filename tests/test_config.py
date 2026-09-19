@@ -13,15 +13,6 @@ def test_virtual_or_invalid_network_interface_is_rejected(monkeypatch: pytest.Mo
         Settings.from_env()
 
 
-def test_smart_interval_defaults_to_fifteen_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("MONITOR_SUITE_SMART_INTERVAL", raising=False)
-    assert Settings.from_env().smart_sample_interval_seconds == 900.0
-
-
-def test_smart_interval_can_be_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("MONITOR_SUITE_SMART_INTERVAL", "1800")
-    assert Settings.from_env().smart_sample_interval_seconds == 1800.0
-
 
 @pytest.mark.parametrize(
     ("name", "attribute"),
@@ -30,7 +21,6 @@ def test_smart_interval_can_be_configured(monkeypatch: pytest.MonkeyPatch) -> No
         ("MONITOR_SUITE_POWER_INTERVAL", "power_sample_interval_seconds"),
         ("MONITOR_SUITE_RAID_IDLE_INTERVAL", "raid_idle_interval_seconds"),
         ("MONITOR_SUITE_RAID_ACTIVE_INTERVAL", "raid_active_interval_seconds"),
-        ("MONITOR_SUITE_SMART_RETRY_INTERVAL", "smart_retry_interval_seconds"),
     ],
 )
 def test_probe_intervals_are_configurable(
@@ -47,7 +37,6 @@ def test_probe_intervals_are_configurable(
         "MONITOR_SUITE_POWER_INTERVAL",
         "MONITOR_SUITE_RAID_IDLE_INTERVAL",
         "MONITOR_SUITE_RAID_ACTIVE_INTERVAL",
-        "MONITOR_SUITE_SMART_RETRY_INTERVAL",
     ],
 )
 def test_probe_intervals_reject_zero(monkeypatch: pytest.MonkeyPatch, name: str) -> None:

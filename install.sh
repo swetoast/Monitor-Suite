@@ -5,7 +5,7 @@ REPO_URL=${MONITOR_SUITE_REPO_URL:-https://github.com/swetoast/Monitor-Suite.git
 BRANCH=${MONITOR_SUITE_BRANCH:-main}
 INSTALL_DIR=${MONITOR_SUITE_INSTALL_DIR:-/opt/monitor-suite-agent}
 CONFIG_FILE=${MONITOR_SUITE_CONFIG_FILE:-/etc/monitor-suite-agent.env}
-SERVICE_FILE=${MONITOR_SUITE_SERVICE_FILE:-/etc/systemd/system/monitor-suite-agent.service}
+SERVICE_FILE=/etc/systemd/system/monitor-suite-agent.service
 SERVICE_NAME=monitor-suite-agent.service
 SMART_SERVICE_NAME=monitor-suite-smart.service
 SMART_TIMER_NAME=monitor-suite-smart.timer
@@ -37,12 +37,18 @@ validate_paths() {
         *) fail "MONITOR_SUITE_INSTALL_DIR must be an absolute path." ;;
     esac
     case "$CONFIG_FILE" in /*) ;; *) fail "MONITOR_SUITE_CONFIG_FILE must be an absolute path." ;; esac
-    case "$SERVICE_FILE" in /*) ;; *) fail "MONITOR_SUITE_SERVICE_FILE must be an absolute path." ;; esac
-    case "$INSTALL_DIR$CONFIG_FILE$SERVICE_FILE" in
-        *[!A-Za-z0-9_./-]*) fail "Installation, configuration, and service paths may use only letters, numbers, _, ., /, and -." ;;
+    case "$INSTALL_DIR$CONFIG_FILE" in
+        *[!A-Za-z0-9_./-]*) fail "Installation and configuration paths may use only letters, numbers, _, ., /, and -." ;;
     esac
     case "$BRANCH" in
         ""|-*) fail "MONITOR_SUITE_BRANCH must be a branch name and cannot begin with -." ;;
+    esac
+    case "$SERVICE_USER" in
+        [A-Za-z_]* ) ;;
+        *) fail "MONITOR_SUITE_SERVICE_USER must begin with a letter or underscore." ;;
+    esac
+    case "$SERVICE_USER" in
+        *[!A-Za-z0-9_-]*) fail "MONITOR_SUITE_SERVICE_USER contains unsupported characters." ;;
     esac
 }
 
@@ -303,8 +309,19 @@ install_or_update() {
     need_root
     validate_paths
     install_dependencies
+    need_command getent
+    need_command groupadd
+    need_command useradd
+    need_command usermod
+    if ! getent group "$SERVICE_USER" >/dev/null 2>&1; then
+        groupadd --system "$SERVICE_USER"
+    fi
     if ! id "$SERVICE_USER" >/dev/null 2>&1; then
-        useradd --system --home-dir "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+        useradd --system --gid "$SERVICE_USER" --home-dir "$INSTALL_DIR" \
+            --shell /usr/sbin/nologin "$SERVICE_USER"
+    fi
+    if getent group video >/dev/null 2>&1; then
+        usermod --append --groups video "$SERVICE_USER"
     fi
     need_command git
     need_command python3
@@ -332,7 +349,7 @@ uninstall_agent() {
     rm -f "/etc/systemd/system/$SMART_SERVICE_NAME" "/etc/systemd/system/$SMART_TIMER_NAME"
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload
-    rm -rf "$INSTALL_DIR"
+    rm -rf "$INSTALL_DIR" /run/monitor-suite-agent
     say "Removed the service and application."
     say "Preserved configuration: $CONFIG_FILE"
 }
@@ -343,7 +360,7 @@ Usage: install.sh [install|update|status|token|rotate-token|uninstall]
 
 Environment overrides:
   MONITOR_SUITE_REPO_URL       Git repository URL
-  MONITOR_SUITE_BRANCH         Git branch or tag (default: main)
+  MONITOR_SUITE_BRANCH         Git branch (default: main)
   MONITOR_SUITE_INSTALL_DIR    Installation directory
   MONITOR_SUITE_CONFIG_FILE    Configuration file
 EOF

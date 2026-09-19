@@ -1,6 +1,10 @@
 """Public route and schema contract tests."""
 
+from pathlib import Path
+
 from monitor_suite_agent.app import app
+from monitor_suite_agent.models import RaspberryPiHealth
+from monitor_suite_agent.telemetry import build_health, read_network_metadata
 
 
 def test_routes_are_intentionally_small() -> None:
@@ -37,3 +41,22 @@ def test_storage_health_public_field_names_are_intentional() -> None:
         '"unsafe_shutdowns"', '"load_cycle_count"',
     ):
         assert excluded not in source
+
+
+def test_firmware_health_values_always_match_public_model() -> None:
+    unavailable = build_health(None)
+    assert RaspberryPiHealth.model_validate(unavailable).status == "unavailable"
+
+    flags = {
+        "under_voltage_now": False,
+        "frequency_capped_now": True,
+        "throttled_now": False,
+        "soft_temperature_limit_now": False,
+    }
+    assert RaspberryPiHealth.model_validate(build_health(flags)).status == "warning"
+    flags["under_voltage_now"] = True
+    assert RaspberryPiHealth.model_validate(build_health(flags)).status == "critical"
+
+
+def test_missing_network_metadata_uses_public_unavailable_value(tmp_path: Path) -> None:
+    assert read_network_metadata(tmp_path, None)["status"] == "unavailable"

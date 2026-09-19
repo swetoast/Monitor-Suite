@@ -760,6 +760,7 @@ These values are inexpensive and require frequent samples for meaningful rates.
 ### 14.2 Thermal and cooling: 2 seconds
 
 - CPU temperature
+- NVMe composite temperatures from `hwmon`
 - Fan speed and cooling state
 
 These sysfs values can change quickly enough to justify a short interval but do not need to be read every lifecycle tick.
@@ -785,7 +786,7 @@ RAID sysfs is read every 30 seconds while arrays are idle. If any array is recov
 
 ### 14.6 SMART schedule
 
-Normal SMART collection runs every 15 minutes. A previously supported disk that becomes unavailable is retried after 60 seconds. SMART uses `smartctl -n standby`; a sleeping disk retains its last known values and is not awakened for monitoring. Unsupported devices are not exposed and do not cause rapid retries.
+A root-only systemd oneshot collector runs every 15 minutes and writes a sanitized atomic cache. SMART uses `smartctl -n standby`; a sleeping disk retains its last known values and is not awakened for monitoring. The unprivileged API validates cache schema and freshness, preserves known device identities as unavailable when the cache cannot be trusted, and overlays fresh NVMe composite temperatures from `hwmon`.
 
 ### 14.7 Static values
 

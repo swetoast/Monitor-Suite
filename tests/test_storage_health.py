@@ -1,6 +1,7 @@
 """RAID and SMART reduction tests."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from monitor_suite_agent.telemetry import (
@@ -9,6 +10,9 @@ from monitor_suite_agent.telemetry import (
     parse_smartctl_scan,
     read_raid_arrays,
     read_smart_devices,
+    read_smart_cache,
+    read_nvme_temperatures,
+    merge_nvme_temperatures,
 )
 
 
@@ -233,3 +237,94 @@ def test_probe_fixture_preserves_sat_nonzero_exit_json_evidence() -> None:
         assert payload["smartctl"]["exit_status"] == 4
         assert payload["smart_status"]["passed"] is True
         assert isinstance(payload["temperature"]["current"], int)
+
+
+def _write_smart_cache(path: Path, generated_at: datetime, devices: list[dict[str, object]]) -> None:
+    path.write_text(json.dumps({
+        "schema_version": 1,
+        "generated_at": generated_at.isoformat().replace("+00:00", "Z"),
+        "devices": devices,
+    }))
+
+
+def test_current_smart_cache_is_accepted(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
+    cache = tmp_path / "smart.json"
+    expected = [
+        {"device": "sda", "status": "healthy", "temperature_c": 29.0},
+        {"device": "nvme0n1", "status": "healthy", "temperature_c": 20.0, "remaining_life_percent": 98.0},
+    ]
+    _write_smart_cache(cache, now, expected)
+    devices, current = read_smart_cache(cache, 1800.0, now)
+    assert current is True
+    assert devices == expected
+
+
+def test_stale_smart_cache_preserves_inventory_as_unavailable(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
+    cache = tmp_path / "smart.json"
+    _write_smart_cache(cache, now - timedelta(hours=1), [
+        {"device": "sda", "status": "healthy", "temperature_c": 29}
+    ])
+    assert read_smart_cache(cache, 1800.0, now) == (
+        [{"device": "sda", "status": "unavailable", "temperature_c": None}], False
+    )
+
+
+def test_missing_or_corrupt_smart_cache_uses_previous_inventory(tmp_path: Path) -> None:
+    cache = tmp_path / "smart.json"
+    previous = [{"device": "sdb", "status": "healthy", "temperature_c": 28}]
+    expected = [{"device": "sdb", "status": "unavailable", "temperature_c": None}]
+    assert read_smart_cache(cache, 1800.0, datetime.now(timezone.utc), previous) == (expected, False)
+    cache.write_text("not json")
+    assert read_smart_cache(cache, 1800.0, datetime.now(timezone.utc), previous) == (expected, False)
+
+
+def test_future_and_wrong_schema_smart_cache_are_rejected(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
+    cache = tmp_path / "smart.json"
+    payload = [{"device": "sda", "status": "healthy", "temperature_c": 29}]
+    _write_smart_cache(cache, now + timedelta(minutes=2), payload)
+    assert read_smart_cache(cache, 1800.0, now) == (
+        [{"device": "sda", "status": "unavailable", "temperature_c": None}], False
+    )
+    data = json.loads(cache.read_text())
+    data["schema_version"] = 2
+    cache.write_text(json.dumps(data))
+    assert read_smart_cache(cache, 1800.0, now) == ([], False)
+
+
+def test_invalid_smart_values_and_duplicate_devices_are_rejected(tmp_path: Path) -> None:
+    now = datetime(2026, 9, 19, 16, 0, tzinfo=timezone.utc)
+    cache = tmp_path / "smart.json"
+    previous = [{"device": "sda", "status": "healthy", "temperature_c": 29}]
+    _write_smart_cache(cache, now, [
+        {"device": "sda", "status": "healthy", "temperature_c": float("nan")}
+    ])
+    assert read_smart_cache(cache, 1800.0, now, previous)[0][0]["status"] == "unavailable"
+    _write_smart_cache(cache, now, previous + previous)
+    assert read_smart_cache(cache, 1800.0, now, previous)[1] is False
+
+
+def test_nvme_hwmon_temperature_maps_to_namespace_and_overrides_smart(tmp_path: Path) -> None:
+    hwmon_root = tmp_path / "hwmon"
+    block_root = tmp_path / "block"
+    controller = tmp_path / "devices" / "pci" / "nvme" / "nvme0"
+    controller.mkdir(parents=True)
+    (block_root / "nvme0n1" / "device").mkdir(parents=True)
+    hwmon = hwmon_root / "hwmon0"
+    hwmon.mkdir(parents=True)
+    (hwmon / "name").write_text("nvme")
+    (hwmon / "temp1_input").write_text("19850")
+    (hwmon / "device").symlink_to(controller, target_is_directory=True)
+    temperatures = read_nvme_temperatures(hwmon_root, block_root)
+    assert temperatures == {"nvme0n1": 19.85}
+    assert merge_nvme_temperatures(
+        [{"device": "nvme0n1", "status": "healthy", "temperature_c": 20}], temperatures
+    ) == [{"device": "nvme0n1", "status": "healthy", "temperature_c": 19.85}]
+
+
+def test_nvme_hwmon_temperature_survives_unavailable_smart() -> None:
+    assert merge_nvme_temperatures([], {"nvme1n1": 31.85}) == [
+        {"device": "nvme1n1", "status": "unavailable", "temperature_c": 31.85}
+    ]

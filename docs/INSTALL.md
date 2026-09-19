@@ -121,10 +121,10 @@ Available overrides:
 
 ```text
 MONITOR_SUITE_REPO_URL
-MONITOR_SUITE_BRANCH
+MONITOR_SUITE_BRANCH          Git branch name
 MONITOR_SUITE_INSTALL_DIR
 MONITOR_SUITE_CONFIG_FILE
-MONITOR_SUITE_SERVICE_USER
+MONITOR_SUITE_SERVICE_USER    API service user and matching group
 ```
 
 ## Private Git repository

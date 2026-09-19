@@ -153,15 +153,15 @@ Requirements:
 The following work is approved before the Home Assistant integration is treated as production-ready:
 
 1. Isolate expensive SMART work (implemented in 1.6.0) from the fast telemetry loop so a slow disk cannot delay CPU, network, disk-rate, thermal, or power updates.
-2. Publish the first lightweight snapshot (implemented in 1.6.0) before starting background SMART collection.
-3. Add bounded SMART retry backoff (implemented in 1.6.0) for previously supported disks that become unavailable, returning to the normal interval after recovery.
+2. Publish lightweight API snapshots independently of the external SMART collector.
+3. Run fixed-purpose SMART collection in a separate root-only systemd oneshot service on a 15-minute timer.
 4. Track probe-group success internally and apply explicit last-good-value and availability rules without exposing diagnostic clutter as normal sensors. Implemented in 2.0.0.
 5. Rediscover the network interface (implemented in 1.6.0), root backing device, and cooling paths only when their cached selections become invalid.
 6. Add typed public API response models (implemented in 1.6.0) to protect the `/status` and `/health` contracts.
 7. Report concise daemon health states for startup, stale snapshots, and repeated expected-probe failures without duplicating telemetry. Completed and regression-tested across every probe group in 2.1.0.
 8. Log state transitions rather than unchanged probe cycles. Completed and regression-tested in 2.2.0 for RAID state and recovery, probe availability, current undervoltage, thermal and performance limiting, selected network interface, root backing device, and cooling hardware. Public-source privacy cleanup was completed in 2.2.1.
-9. Keep RAID and SMART as one cohesive storage-health subsystem if the telemetry module is split.
-10. Keep the daemon stateless (confirmed in 1.6.0). Do not add SQLite or time-series storage. Home Assistant owns history. A small nonsensitive atomic JSON capability cache may be considered only if live hardware testing proves it is needed for sleeping disks across daemon restarts.
+9. Keep RAID state in the unprivileged API collector and SMART access in the privileged collector, joined only through the sanitized cache contract.
+10. Keep the daemon stateless. Do not add SQLite or time-series storage. Home Assistant owns history. The only local state is the nonsensitive atomic SMART cache under `/run`, used to cross the privilege boundary and retain sleeping-disk health.
 
 
 ## 5. Security hardening (implemented in 1.7.0)

@@ -1,3 +1,14 @@
+## 2.8.1
+
+- Fixed `/status` failures when firmware health is unavailable or an active hardware warning is reported.
+- Restored unprivileged `vcgencmd` access by removing the private device namespace and adding the service to the video group.
+- Made service user and group creation deterministic on fresh installations.
+- Added independent NVMe composite temperatures from `hwmon`, refreshed with thermal telemetry.
+- Preserved known SMART devices as unavailable when the privileged cache is stale, missing, or invalid.
+- Added strict SMART cache schema, timestamp, numeric range, and duplicate-device validation.
+- Removed obsolete in-process SMART scheduling settings and constructor arguments.
+- Corrected installer cleanup, branch documentation, security documentation, and split-service descriptions.
+
 ## 2.8.0
 
 - Split the network API and privileged SMART collection into separate services.

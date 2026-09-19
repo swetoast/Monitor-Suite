@@ -153,12 +153,22 @@ def test_api_service_is_unprivileged_and_smart_collector_is_root() -> None:
     timer = (INSTALLER.parent / "deploy/monitor-suite-smart.timer").read_text()
     assert "User=monitor-suite" in api
     assert "Group=monitor-suite" in api
-    assert "PrivateDevices=true" in api
+    assert "PrivateDevices=true" not in api
+    assert "SupplementaryGroups=video" in api
     assert "User=root" in collector
     assert "Group=monitor-suite" in collector
     assert "monitor-suite-smart-collector" in collector
     assert "OnUnitActiveSec=15min" in timer
     assert "useradd --system" in installer
+
+
+def test_installer_creates_matching_service_group_and_video_membership() -> None:
+    installer = INSTALLER.read_text()
+    assert 'groupadd --system "$SERVICE_USER"' in installer
+    assert 'useradd --system --gid "$SERVICE_USER"' in installer
+    assert 'usermod --append --groups video "$SERVICE_USER"' in installer
+    assert "MONITOR_SUITE_SERVICE_FILE" not in installer
+    assert 'rm -rf "$INSTALL_DIR" /run/monitor-suite-agent' in installer
 
 
 def test_unprivileged_service_keeps_systemd_hardening() -> None:

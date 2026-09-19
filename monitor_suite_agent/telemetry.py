@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
+import math
 import logging
 import os
 from pathlib import Path
@@ -307,13 +308,24 @@ def parse_throttling(text: str | None) -> dict[str, bool | int] | None:
 def build_health(flags: Mapping[str, bool | int] | None) -> dict[str, str]:
     """Expose only current authoritative firmware-health conditions."""
     if flags is None:
-        return {"status": "unknown", "power_supply": "unknown", "thermal_state": "unknown", "performance_state": "unknown"}
+        return {
+            "status": "unavailable",
+            "power_supply": "unavailable",
+            "thermal_state": "unavailable",
+            "performance_state": "unavailable",
+        }
     under_voltage = bool(flags["under_voltage_now"])
     thermal = bool(flags["soft_temperature_limit_now"])
     throttled = bool(flags["throttled_now"])
     capped = bool(flags["frequency_capped_now"])
+    if under_voltage or throttled:
+        status = "critical"
+    elif thermal or capped:
+        status = "warning"
+    else:
+        status = "ok"
     return {
-        "status": "problem" if any((under_voltage, thermal, throttled, capped)) else "ok",
+        "status": status,
         "power_supply": "under_voltage" if under_voltage else "ok",
         "thermal_state": "limited" if thermal else "normal",
         "performance_state": "throttled" if throttled else "frequency_capped" if capped else "normal",
@@ -380,7 +392,7 @@ def calculate_rates(previous: RateCounter | None, current: RateCounter | None) -
 def read_network_metadata(net_root: Path, interface: str | None) -> dict[str, str | int | None]:
     """Read link state and negotiated speed."""
     if not interface:
-        return {"interface": None, "status": "unknown", "link_speed_mbps": None}
+        return {"interface": None, "status": "unavailable", "link_speed_mbps": None}
     base = net_root / interface
     state = _read_text(base / "operstate")
     if state not in {"up", "down"}:
@@ -688,34 +700,140 @@ def read_smart_devices(
     return devices
 
 
-def read_smart_cache(path: Path, max_age_seconds: float, now: datetime) -> list[dict[str, Any]]:
-    """Read the sanitized SMART cache produced by the privileged collector."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        generated = datetime.fromisoformat(str(data["generated_at"]).replace("Z", "+00:00"))
-        devices = data["devices"]
-        if generated.tzinfo is None or (now - generated).total_seconds() > max_age_seconds:
-            return []
-        if not isinstance(devices, list):
-            return []
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return []
+def _valid_number(value: Any, minimum: float, maximum: float) -> float | None:
+    """Return a finite number inside the accepted public range."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or not minimum <= number <= maximum:
+        return None
+    return number
+
+
+def _clean_smart_devices(value: Any) -> list[dict[str, Any]] | None:
+    """Validate and reduce a cache device list to the public SMART contract."""
+    if not isinstance(value, list):
+        return None
     allowed = {"device", "status", "temperature_c", "remaining_life_percent"}
     statuses = {"healthy", "warning", "failed", "testing", "unavailable"}
     clean: list[dict[str, Any]] = []
-    for item in devices:
+    seen: set[str] = set()
+    for item in value:
         if not isinstance(item, dict) or set(item) - allowed:
-            continue
-        device, status = item.get("device"), item.get("status")
-        if not isinstance(device, str) or not re.fullmatch(r"(?:sd[a-z]+|nvme\d+n\d+)", device):
-            continue
-        if status not in statuses:
-            continue
-        value = {"device": device, "status": status, "temperature_c": item.get("temperature_c")}
-        if item.get("remaining_life_percent") is not None:
-            value["remaining_life_percent"] = item["remaining_life_percent"]
-        clean.append(value)
+            return None
+        device = item.get("device")
+        status = item.get("status")
+        if (
+            not isinstance(device, str)
+            or not re.fullmatch(r"(?:sd[a-z]+|nvme\d+n\d+)", device)
+            or device in seen
+            or status not in statuses
+        ):
+            return None
+        temperature_raw = item.get("temperature_c")
+        temperature = None
+        if temperature_raw is not None:
+            temperature = _valid_number(temperature_raw, -40.0, 150.0)
+            if temperature is None:
+                return None
+        life_raw = item.get("remaining_life_percent")
+        life = None
+        if life_raw is not None:
+            life = _valid_number(life_raw, 0.0, 100.0)
+            if life is None:
+                return None
+        entry: dict[str, Any] = {
+            "device": device,
+            "status": status,
+            "temperature_c": temperature,
+        }
+        if life is not None:
+            entry["remaining_life_percent"] = life
+        clean.append(entry)
+        seen.add(device)
     return clean
+
+
+def _unavailable_smart_devices(devices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Preserve known device identities while marking cached health unavailable."""
+    return [
+        {"device": item["device"], "status": "unavailable", "temperature_c": None}
+        for item in devices
+    ]
+
+
+def read_smart_cache(
+    path: Path,
+    max_age_seconds: float,
+    now: datetime,
+    previous: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Read a current sanitized SMART cache and preserve known devices on failure."""
+    fallback = _unavailable_smart_devices(previous or [])
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("schema_version") != 1:
+            return fallback, False
+        devices = _clean_smart_devices(data.get("devices"))
+        if devices is None:
+            return fallback, False
+        generated = datetime.fromisoformat(str(data["generated_at"]).replace("Z", "+00:00"))
+        if generated.tzinfo is None:
+            return _unavailable_smart_devices(devices), False
+        age = (now - generated).total_seconds()
+        if age < -60.0 or age > max_age_seconds:
+            return _unavailable_smart_devices(devices), False
+        return devices, True
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return fallback, False
+
+
+def read_nvme_temperatures(hwmon_root: Path, block_root: Path) -> dict[str, float]:
+    """Map NVMe composite hwmon temperatures to public namespace names."""
+    temperatures: dict[str, float] = {}
+    if not hwmon_root.exists() or not block_root.exists():
+        return temperatures
+    for hwmon in sorted(hwmon_root.glob("hwmon*"), key=lambda item: item.name):
+        if (_read_text(hwmon / "name") or "").lower() != "nvme":
+            continue
+        try:
+            parts = (hwmon / "device").resolve().parts
+        except OSError:
+            continue
+        controller = next(
+            (part for part in reversed(parts) if re.fullmatch(r"nvme\d+", part)),
+            None,
+        )
+        millidegrees = _read_int(hwmon / "temp1_input")
+        if controller is None or millidegrees is None:
+            continue
+        temperature = _valid_number(millidegrees / 1000.0, -40.0, 150.0)
+        if temperature is None:
+            continue
+        for namespace in sorted(block_root.glob(f"{controller}n*"), key=lambda item: item.name):
+            if not (namespace / "partition").exists():
+                temperatures[namespace.name] = round(temperature, 3)
+    return temperatures
+
+
+def merge_nvme_temperatures(
+    devices: list[dict[str, Any]], temperatures: Mapping[str, float]
+) -> list[dict[str, Any]]:
+    """Apply fresh unprivileged NVMe temperatures without changing SMART health."""
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in devices:
+        entry = dict(item)
+        if entry["device"] in temperatures:
+            entry["temperature_c"] = temperatures[entry["device"]]
+        merged.append(entry)
+        seen.add(entry["device"])
+    for device, temperature in sorted(temperatures.items()):
+        if device not in seen:
+            merged.append(
+                {"device": device, "status": "unavailable", "temperature_c": temperature}
+            )
+    return merged
 
 
 @dataclass(slots=True)
@@ -760,7 +878,6 @@ class TelemetrySampler:
         settings: Settings,
         paths: Paths | None = None,
         command_runner: Callable[[list[str], float], str | None] = run_command,
-        smart_runner: Callable[[list[str], float], str | None] = run_smartctl,
         monotonic: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
@@ -781,6 +898,7 @@ class TelemetrySampler:
         self._hardware_values: dict[str, Any] = {}
         self._raid_values: list[dict[str, Any]] = []
         self._smart_values: list[dict[str, Any]] = []
+        self._nvme_temperatures: dict[str, float] = {}
         self._thermal_schedule = ProbeSchedule()
         self._power_schedule = ProbeSchedule()
         self._resource_schedule = ProbeSchedule()
@@ -1056,8 +1174,16 @@ class TelemetrySampler:
         )
 
 
-        self._smart_values = read_smart_cache(self.settings.smart_cache_file, self.settings.smart_cache_max_age_seconds, self._now())
-        self._record_probe("smart", bool(self._smart_values), mono)
+        cached_smart, smart_cache_current = read_smart_cache(
+            self.settings.smart_cache_file,
+            self.settings.smart_cache_max_age_seconds,
+            self._now(),
+            self._smart_values,
+        )
+        self._smart_values = merge_nvme_temperatures(
+            cached_smart, self._nvme_temperatures
+        )
+        self._record_probe("smart", smart_cache_current, mono)
 
         if self._raid_schedule.due(mono):
             self._raid_values = read_raid_arrays(self.paths.block_root)

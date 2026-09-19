@@ -108,7 +108,7 @@ def test_current_flags_have_clear_precedence() -> None:
     assert flags is not None
     health = build_health(flags)
     assert health == {
-        "status": "problem",
+        "status": "critical",
         "power_supply": "under_voltage",
         "thermal_state": "limited",
         "performance_state": "throttled",

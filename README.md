@@ -127,7 +127,7 @@ The installer will:
 
 1. Check and install required Debian packages.
 2. Download Monitor Suite Agent from GitHub.
-3. Install a hardened systemd service that runs as root so SMART, NVMe, RAID, and Raspberry Pi hardware telemetry are consistently readable.
+3. Install an unprivileged API service plus a short-lived privileged SMART collector.
 4. Create an isolated Python environment.
 5. Generate a random API token.
 6. Install and start the systemd service.
@@ -253,7 +253,7 @@ RAID is normally checked every 30 seconds. During active array work, polling inc
 
 SMART monitoring exposes useful health and lifetime information provided by supported devices. A nonzero `smartctl` exit status alone is not treated as proof that a disk has failed because unsupported log operations can also produce nonzero results.
 
-SMART is normally checked every 15 minutes. Standby-aware polling retains the last known values for a sleeping disk rather than intentionally waking it. Actual support depends on the disk, enclosure, USB bridge, kernel driver, and `smartctl` support.
+A root-only, networkless collector checks SMART every 15 minutes and writes a sanitized runtime cache for the unprivileged API service. Standby-aware polling retains the last known values for a sleeping disk rather than intentionally waking it. NVMe composite temperatures are read separately from `hwmon` by the API service. Actual support depends on the disk, enclosure, USB bridge, kernel driver, and `smartctl` support.
 
 ## Power monitoring
 

@@ -210,3 +210,12 @@ def test_setuptools_packages_only_the_application() -> None:
     pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text()
     assert '[tool.setuptools]' in pyproject
     assert 'packages = ["monitor_suite_agent"]' in pyproject
+
+
+def test_retired_in_process_smart_controls_are_absent() -> None:
+    root = Path(__file__).parents[1]
+    config = (root / "monitor_suite_agent/config.py").read_text()
+    telemetry = (root / "monitor_suite_agent/telemetry.py").read_text()
+    assert "smart_sample_interval_seconds" not in config
+    assert "smart_retry_interval_seconds" not in config
+    assert "smart_runner" not in telemetry

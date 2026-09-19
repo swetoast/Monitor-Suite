@@ -20,8 +20,6 @@ def test_probe_intervals_match_cost_and_volatility() -> None:
     assert settings.raid_active_interval_seconds == 2.0
     assert settings.raid_idle_interval_seconds == 30.0
     assert settings.slow_sample_interval_seconds == 30.0
-    assert settings.smart_retry_interval_seconds == 60.0
-    assert settings.smart_sample_interval_seconds == 900.0
 
 
 def test_all_scheduled_intervals_are_positive() -> None:
@@ -33,8 +31,6 @@ def test_all_scheduled_intervals_are_positive() -> None:
         settings.raid_active_interval_seconds,
         settings.raid_idle_interval_seconds,
         settings.slow_sample_interval_seconds,
-        settings.smart_retry_interval_seconds,
-        settings.smart_sample_interval_seconds,
     )
     assert all(interval > 0 for interval in intervals)
 
