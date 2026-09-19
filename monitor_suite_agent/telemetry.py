@@ -535,7 +535,6 @@ def read_raid_arrays(block_root: Path) -> list[dict[str, Any]]:
             "expected_members": expected,
             "failed_members": failed,
             "redundancy": _raid_redundancy(level, state, failed),
-            "smart_status": "unavailable",
         }
         completed = _read_text(md / "sync_completed")
         if state in {"recovering", "resyncing", "checking", "reshaping"} and completed and "/" in completed:
@@ -617,33 +616,77 @@ def discover_physical_disks(block_root: Path) -> list[str]:
     ]
 
 
+def parse_smartctl_scan(text: str | None) -> list[tuple[str, str | None]]:
+    """Parse smartctl scan output into endpoint and optional device-type pairs."""
+    devices: list[tuple[str, str | None]] = []
+    for raw_line in (text or "").splitlines():
+        fields = raw_line.partition("#")[0].split()
+        if not fields or not fields[0].startswith("/dev/"):
+            continue
+        device_type: str | None = None
+        if "-d" in fields:
+            index = fields.index("-d")
+            if index + 1 < len(fields):
+                device_type = fields[index + 1]
+        devices.append((fields[0], device_type))
+    return devices
+
+
+def _public_smart_device(endpoint: str, block_root: Path) -> str:
+    """Map a SMART controller endpoint to its public whole-disk block name."""
+    name = Path(endpoint).name
+    if not name.startswith("nvme") or "n" in name.removeprefix("nvme"):
+        return name
+    namespaces = [
+        path.name
+        for path in sorted(block_root.glob(f"{name}n*"), key=lambda item: item.name)
+        if not (path / "partition").exists()
+    ]
+    return namespaces[0] if len(namespaces) == 1 else name
+
+
+def discover_smart_devices(
+    block_root: Path,
+    command_runner: Callable[[list[str], float], str | None],
+    timeout: float,
+) -> list[tuple[str, str | None, str]]:
+    """Discover valid SMART endpoints and map them to public block-device names."""
+    scan = parse_smartctl_scan(command_runner(["smartctl", "--scan-open"], timeout))
+    if scan:
+        return [
+            (endpoint, device_type, _public_smart_device(endpoint, block_root))
+            for endpoint, device_type in scan
+        ]
+    return [(f"/dev/{name}", None, name) for name in discover_physical_disks(block_root)]
+
+
 def read_smart_devices(
     block_root: Path,
     command_runner: Callable[[list[str], float], str | None],
     timeout: float,
     previous: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Read approved SMART values without waking standby disks."""
+    """Read approved SMART values from discovered endpoints without waking disks."""
     prior = {item["device"]: item for item in previous or []}
     devices: list[dict[str, Any]] = []
-    for name in discover_physical_disks(block_root):
-        text = command_runner(["smartctl", "-n", "standby", "-a", "-j", f"/dev/{name}"], timeout)
-        result = parse_smart_json(text, name)
+    for endpoint, device_type, public_name in discover_smart_devices(
+        block_root, command_runner, timeout
+    ):
+        arguments = ["smartctl", "-n", "standby", "-a", "-j"]
+        if device_type is not None:
+            arguments.extend(["-d", device_type])
+        arguments.append(endpoint)
+        text = command_runner(arguments, timeout)
+        result = parse_smart_json(text, public_name)
         if result is not None:
             devices.append(result)
-        elif name in prior and _smart_device_in_standby(text):
-            devices.append(prior[name])
-        elif name in prior:
-            devices.append({"device": name, "status": "unavailable", "temperature_c": None})
+        elif public_name in prior and _smart_device_in_standby(text):
+            devices.append(prior[public_name])
+        else:
+            devices.append(
+                {"device": public_name, "status": "unavailable", "temperature_c": None}
+            )
     return devices
-
-
-def apply_member_smart(raid_arrays: list[dict[str, Any]], smart_devices: list[dict[str, Any]]) -> None:
-    states = {item["device"]: item["status"] for item in smart_devices}
-    rank = {"healthy": 0, "unavailable": 1, "testing": 2, "warning": 3, "failed": 4}
-    for array in raid_arrays:
-        member_states = [states.get(member, "unavailable") for member in array.pop("_members", [])]
-        array["smart_status"] = max(member_states, key=lambda state: rank[state]) if member_states else "unavailable"
 
 
 @dataclass(slots=True)
@@ -1030,7 +1073,6 @@ class TelemetrySampler:
 
         if self._raid_schedule.due(mono):
             self._raid_values = read_raid_arrays(self.paths.block_root)
-            apply_member_smart(self._raid_values, self._smart_values)
             self._record_probe(
                 "raid",
                 self.paths.block_root.exists()

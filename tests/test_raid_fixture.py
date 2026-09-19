@@ -13,7 +13,6 @@ def test_verified_raid_probe_evidence_is_preserved() -> None:
         "raid_disks=2",
         "dev-sda state=in_sync",
         "dev-sdb state=in_sync",
-        '"smart_status": {',
         '"passed": true',
     )
     for marker in required:

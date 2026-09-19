@@ -76,7 +76,6 @@ class RaidArrayStatus(APIModel):
     expected_members: int | None
     failed_members: int | None
     redundancy: Literal["none", "available", "reduced", "lost", "unknown"]
-    smart_status: Literal["healthy", "warning", "failed", "testing", "unavailable"]
     progress_percent: float | None = None
 
 

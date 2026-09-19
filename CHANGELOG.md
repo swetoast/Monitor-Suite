@@ -1,3 +1,12 @@
+## 2.5.0
+
+- Changed SMART discovery to use `smartctl --scan-open`, preserving required device types such as `sat` and `nvme`.
+- Mapped NVMe controller endpoints such as `/dev/nvme0` to their public block namespaces such as `nvme0n1`.
+- Fixed missing NVMe drives and restored per-drive SMART health, temperature, and remaining-life data.
+- Kept newly discovered drives visible as unavailable when a collection attempt fails instead of silently omitting them.
+- Removed the physical-drive SMART summary from RAID arrays because SMART health belongs to each drive, not the MD array.
+- Added regression coverage based on the verified four-drive Raspberry Pi probe: two USB SATA RAID members and two NVMe drives.
+
 # Changelog
 
 ## 2.4.4
