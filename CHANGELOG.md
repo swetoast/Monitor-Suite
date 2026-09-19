@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.3
+
+- Fixed installation from the repository by explicitly limiting setuptools packaging to `monitor_suite_agent`.
+- Prevented the top-level `deploy` directory from being treated as a second Python package.
+- Added regression tests that build a wheel and verify that only the intended Python package is included.
+
 ## 2.4.2
 
 - Refocused the README on Monitor Suite Agent as standalone Raspberry Pi server software.

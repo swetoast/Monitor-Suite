@@ -206,3 +206,9 @@ def test_readme_is_user_focused_and_copyright_is_exact() -> None:
         0x1F300 <= ord(character) <= 0x1FAFF
         for character in readme
     )
+
+
+def test_setuptools_packages_only_the_application() -> None:
+    pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text()
+    assert '[tool.setuptools]' in pyproject
+    assert 'packages = ["monitor_suite_agent"]' in pyproject

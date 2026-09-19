@@ -1,4 +1,4 @@
-# Exact dependency set validated for Monitor Suite Agent 2.4.2
+# Exact dependency set validated for Monitor Suite Agent 2.4.3
 annotated-doc==0.0.5
 annotated-types==0.7.0
 anyio==4.14.2
