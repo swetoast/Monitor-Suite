@@ -2,7 +2,7 @@
 
 This roadmap contains only the remaining agreed work for Monitor Suite Agent. Values that are collected internally do not automatically become API fields, Home Assistant entities, or entity attributes.
 
-## 1. RAID health (implemented and refined through 2.5.0)
+## 1. RAID health (implemented and refined through 2.5.1)
 
 The supplied Raspberry Pi 5 RAID and SMART probe is preserved as `tests/fixtures/raid_smart_probe_pi5.txt` and is authoritative regression evidence for the initial implementation.
 
@@ -35,7 +35,7 @@ During an active RAID operation only, add `progress` with unit `%`. Do not expos
 
 The verified fixture contains one clean RAID 0 array, `md0`, with two expected and active members, zero failed members, and no redundancy. SMART health remains attached to each physical member disk and is not aggregated into the RAID array.
 
-## 2. SMART monitoring (implemented and refined through 2.5.0)
+## 2. SMART monitoring (implemented and refined through 2.5.1)
 
 SMART monitoring must expose only values that provide clear, independent user value. SMART data that is useful only for calculating health remains internal.
 

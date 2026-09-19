@@ -544,7 +544,6 @@ def read_raid_arrays(block_root: Path) -> list[dict[str, Any]]:
                     result["progress_percent"] = round(done * 100 / total, 1)
             except ValueError:
                 pass
-        result["_members"] = [member.name.removeprefix("dev-") for member in members]
         arrays.append(result)
     return arrays
 

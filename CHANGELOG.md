@@ -1,3 +1,9 @@
+## 2.5.1
+
+- Fixed `/status` returning HTTP 500 after RAID SMART aggregation was removed.
+- Removed the internal RAID `_members` field before public response validation.
+- Added regression checks that RAID responses contain neither `smart_status` nor `_members`.
+
 ## 2.5.0
 
 - Changed SMART discovery to use `smartctl --scan-open`, preserving required device types such as `sat` and `nvme`.

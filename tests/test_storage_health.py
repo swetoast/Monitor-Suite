@@ -130,6 +130,7 @@ def test_healthy_raid0_reports_no_redundancy_and_no_smart_status(tmp_path: Path)
     assert result["redundancy"] == "none"
     assert result["active_members"] == 2
     assert "smart_status" not in result
+    assert "_members" not in result
 
 
 def test_recovery_state_takes_priority_over_degraded(tmp_path: Path) -> None:

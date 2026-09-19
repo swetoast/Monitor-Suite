@@ -31,6 +31,7 @@ def test_storage_health_public_field_names_are_intentional() -> None:
     assert '"smart_status"' in source  # physical-drive SMART field remains
     raid_source = source[source.index('def read_raid_arrays'):source.index('def _smart_attributes')]
     assert '"smart_status"' not in raid_source
+    assert '"_members"' not in raid_source
     for excluded in (
         '"serial_number"', '"wwn"', '"power_on_hours"',
         '"unsafe_shutdowns"', '"load_cycle_count"',
