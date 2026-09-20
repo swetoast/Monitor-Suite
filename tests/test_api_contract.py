@@ -60,3 +60,29 @@ def test_firmware_health_values_always_match_public_model() -> None:
 
 def test_missing_network_metadata_uses_public_unavailable_value(tmp_path: Path) -> None:
     assert read_network_metadata(tmp_path, None)["status"] == "unavailable"
+
+
+def test_amd64_optional_attributes_are_typed_without_changing_core_state() -> None:
+    from monitor_suite_agent.models import CoolingStatus, DeviceStatus
+
+    device = DeviceStatus.model_validate(
+        {
+            "model": "Generic x86 System",
+            "operating_system": "Linux",
+            "kernel_version": "6.8.0",
+            "architecture": "amd64",
+        }
+    )
+    cooling = CoolingStatus.model_validate(
+        {
+            "state": "active",
+            "fan_speed_rpm": 836,
+            "fan_count": 6,
+            "active_fan_count": 5,
+        }
+    )
+
+    assert device.architecture == "amd64"
+    assert cooling.fan_speed_rpm == 836
+    assert cooling.fan_count == 6
+    assert cooling.active_fan_count == 5

@@ -293,3 +293,24 @@ def test_success_summary_is_gated_by_service_and_api_verification() -> None:
     assert sequence.index("wait_for_service") < sequence.index("verify_api")
     assert sequence.index("verify_api") < sequence.index("show_summary")
     assert 'if ! verify_api; then' in sequence
+
+
+def test_installer_configures_privilege_separated_collectors() -> None:
+    text = INSTALLER.read_text()
+    assert "monitor-suite-smart.service" in text
+    assert "monitor-suite-smart.timer" in text
+    assert "monitor-suite-power.service" in text
+    assert "monitor-suite-power.timer" in text
+    assert 'x86_64|amd64)' in text
+    assert 'systemctl disable --now "$POWER_TIMER_NAME"' in text
+
+
+def test_documentation_describes_unprivileged_api_service() -> None:
+    readme = (ROOT / "README.md").read_text()
+    install = (ROOT / "docs/INSTALL.md").read_text()
+    security = (ROOT / "docs/SECURITY.md").read_text()
+    assert "unprivileged systemd service" in readme
+    assert "hardened unprivileged Uvicorn API service" in install
+    assert "root-only networkless SMART collector" in install
+    assert "amd64-only root-only networkless RAPL power collector" in install
+    assert "Separate root-only oneshot services" in security

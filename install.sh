@@ -9,6 +9,8 @@ SERVICE_FILE=/etc/systemd/system/monitor-suite-agent.service
 SERVICE_NAME=monitor-suite-agent.service
 SMART_SERVICE_NAME=monitor-suite-smart.service
 SMART_TIMER_NAME=monitor-suite-smart.timer
+POWER_SERVICE_NAME=monitor-suite-power.service
+POWER_TIMER_NAME=monitor-suite-power.timer
 SERVICE_USER=${MONITOR_SUITE_SERVICE_USER:-monitor-suite}
 ACTION=${1:-install}
 CREATED_TOKEN=
@@ -142,9 +144,22 @@ create_service() {
     install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-smart.service" "/etc/systemd/system/$SMART_SERVICE_NAME"
     sed -i "s|/opt/monitor-suite-agent|$INSTALL_DIR|g; s|/etc/monitor-suite-agent.env|$CONFIG_FILE|g; s|Group=monitor-suite|Group=$SERVICE_USER|g" "/etc/systemd/system/$SMART_SERVICE_NAME"
     install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-smart.timer" "/etc/systemd/system/$SMART_TIMER_NAME"
+    install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-power.service" "/etc/systemd/system/$POWER_SERVICE_NAME"
+    sed -i "s|/opt/monitor-suite-agent|$INSTALL_DIR|g; s|/etc/monitor-suite-agent.env|$CONFIG_FILE|g; s|Group=monitor-suite|Group=$SERVICE_USER|g" "/etc/systemd/system/$POWER_SERVICE_NAME"
+    install -m 0644 "$INSTALL_DIR/deploy/monitor-suite-power.timer" "/etc/systemd/system/$POWER_TIMER_NAME"
     systemctl daemon-reload
     systemctl enable "$SMART_TIMER_NAME" "$SERVICE_NAME" >/dev/null
     systemctl start "$SMART_SERVICE_NAME"
+    case "$(uname -m)" in
+        x86_64|amd64)
+            systemctl enable "$POWER_TIMER_NAME" >/dev/null
+            systemctl start "$POWER_SERVICE_NAME"
+            systemctl restart "$POWER_TIMER_NAME"
+            ;;
+        *)
+            systemctl disable --now "$POWER_TIMER_NAME" >/dev/null 2>&1 || true
+            ;;
+    esac
     systemctl restart "$SERVICE_NAME"
     systemctl restart "$SMART_TIMER_NAME"
 }

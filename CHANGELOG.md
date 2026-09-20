@@ -1,3 +1,16 @@
+## Unreleased
+
+- Added simple aarch64 and amd64 architecture routing while preserving the existing Raspberry Pi path.
+- Added amd64 DMI model detection through the existing `device.model` field without adding DMI-specific attributes or exposing unique identifiers.
+- Added amd64 package-temperature collection from `x86_pkg_temp`, `coretemp`, and `k10temp`.
+- Added amd64 multi-fan cooling using average active RPM as the existing cooling sensor state, with `fan_count` and `active_fan_count` attributes.
+- Prevented amd64 systems from running Raspberry Pi-only `vcgencmd` probes.
+- Added cross-platform contract, architecture, temperature, cooling, and Raspberry Pi regression coverage.
+- Added a root-only, networkless RAPL package-power collector with an atomic sanitized runtime cache for amd64.
+- Added strict power-cache freshness and schema validation while retaining `power.value_w` as the existing sensor state.
+- Added `rapl_package` as a measured power source and optional `domain: package` metadata.
+- Added direct fixture-driven amd64 acceptance tests for exact counts, package temperature, multi-fan cooling, privacy, and public-contract stability.
+
 ## 2.8.1
 
 - Fixed `/status` failures when firmware health is unavailable or an active hardware warning is reported.

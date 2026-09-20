@@ -14,7 +14,7 @@ The installer:
 
 - installs missing Debian or Raspberry Pi OS packages with `apt-get`
 - downloads the current `main` branch from GitHub
-- installs a hardened root systemd service for consistent SMART, NVMe, RAID, and Raspberry Pi hardware access
+- installs a hardened unprivileged Uvicorn API service, a root-only networkless SMART collector, and an amd64-only root-only networkless RAPL power collector
 - creates an isolated Python virtual environment
 - installs the locked Python dependencies
 - generates a random 256-bit API token

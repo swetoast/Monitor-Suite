@@ -1,6 +1,6 @@
 # Monitor Suite Agent
 
-Monitor Suite Agent is a lightweight monitoring server for Raspberry Pi. It collects system, thermal, power, network, filesystem, Linux software RAID, and SMART data in the background and exposes a stable authenticated HTTP API.
+Monitor Suite Agent is a lightweight Linux monitoring server for Raspberry Pi aarch64 and supported amd64 systems. It collects system, thermal, power, cooling, network, filesystem, Linux software RAID, and SMART data in the background and exposes one stable authenticated HTTP API.
 
 The server is designed for unattended operation on a trusted LAN. It schedules each probe according to its cost, keeps the latest coherent snapshot in memory, preserves last-known-good values through isolated read failures, and reports unsupported data as unavailable instead of inventing values.
 
@@ -11,6 +11,7 @@ The server is designed for unattended operation on a trusted LAN. It schedules e
 - Failure isolation per probe group, so a temporary SMART or RAID error does not discard unrelated system telemetry
 - Last-known-good retention with explicit freshness and consecutive-failure accounting
 - Raspberry Pi firmware decoding for current undervoltage, thermal limiting, and performance limiting
+- amd64 package temperature, multi-fan cooling summaries, DMI model detection, and privileged RAPL package-power collection where supported
 - Power values labelled by measurement source and confidence, without presenting internal rails as total input power
 - Physical-device and physical-interface filtering that excludes virtual network noise and unrelated attached storage
 - Cached, internally consistent snapshots served without executing hardware probes during API requests
@@ -40,7 +41,7 @@ The server is designed for unattended operation on a trusted LAN. It schedules e
 | Overall health | Whether the agent is starting, operating normally, degraded, or returning stale data |
 | Processor | CPU use, load, frequency, temperature, and throttling conditions |
 | Memory | Current memory use and availability |
-| System | Uptime, boot time, and Raspberry Pi model information |
+| System | Uptime, boot time, operating system, kernel, architecture, and hardware model |
 | Root storage | Filesystem use and the physical device backing the root filesystem |
 | Network | Current physical interface, link information, and transfer rates |
 | Cooling | Active-cooling availability and current state when supported |
@@ -75,10 +76,10 @@ The server filters virtual interfaces, avoids publishing raw identifiers, distin
 
 ## How it works
 
-Monitor Suite Agent runs on the Raspberry Pi as a systemd service. It reads Raspberry Pi firmware and Linux system interfaces locally, keeps the latest results in memory, and serves a consistent snapshot over HTTP.
+Monitor Suite Agent runs as an unprivileged systemd service. It reads Linux system interfaces and, on Raspberry Pi, the existing firmware sources locally, keeps the latest results in memory, and serves a consistent snapshot over HTTP.
 
 ```text
-Raspberry Pi hardware and Linux
+Linux hardware and operating system
              |
              v
      Monitor Suite Agent
@@ -91,7 +92,7 @@ Raspberry Pi hardware and Linux
 
 This design means:
 
-- API consumers do not need SSH or shell access to the Raspberry Pi.
+- API consumers do not need SSH or shell access to the monitored system.
 - API requests return cached data instead of executing every probe on demand.
 - Fast-changing values refresh frequently while slower checks run less often.
 - RAID polling accelerates automatically during recovery, resync, check, or reshape.
@@ -102,22 +103,22 @@ This design means:
 
 ### Supported environment
 
-- Raspberry Pi 5 is the primary tested hardware target.
-- Raspberry Pi OS or another Debian-family Linux distribution is recommended.
+- Raspberry Pi 5 remains the primary release-tested target. amd64 support is fixture-tested and requires final validation on physical target installations.
+- A supported Linux distribution with systemd and Python 3.11 or newer is required.
 - systemd must be available.
 - The installing account must have `sudo` access.
-- The Raspberry Pi needs internet access to GitHub and Python package sources during installation.
-- API consumers must be able to reach the Raspberry Pi over a trusted local network.
+- The monitored system needs internet access to GitHub and Python package sources during installation.
+- API consumers must be able to reach the monitored system over a trusted local network.
 
 The installer adds missing Debian packages when needed, including Git, Python 3, Python virtual-environment support, pip, and `smartmontools`.
 
 ### Hardware-dependent features
 
-Some data depends on the Raspberry Pi model, operating system, kernel, storage device, enclosure, USB bridge, and available command support. Missing support does not prevent the rest of the agent from operating.
+Some data depends on the architecture, hardware model, operating system, kernel, storage device, enclosure, USB bridge, permissions, and available kernel interfaces. Missing support does not prevent unrelated telemetry from operating.
 
 ## Installation
 
-Run this command on the Raspberry Pi:
+Run this command on the monitored Linux system:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/swetoast/Monitor-Suite/main/install.sh | sudo sh
@@ -271,7 +272,7 @@ Internal-rail power is not complete USB-C input power and must not be treated as
 
 Monitor Suite Agent:
 
-- does not control the Raspberry Pi, disks, RAID arrays, fans, or power supply
+- does not control the host, disks, RAID arrays, fans, power limits, or power supply
 - does not repair storage problems or modify RAID configuration
 - does not replace backups, native RAID tools, or manufacturer diagnostics
 - does not expose every raw Linux counter or every SMART field
@@ -285,7 +286,7 @@ Monitor Suite Agent:
 The intended deployment is direct access over a trusted LAN:
 
 ```text
-API consumer -> Raspberry Pi:5000
+API consumer -> monitored Linux system:5000
 ```
 
 The installer binds the service to the LAN, generates a protected API token, and disables interactive API documentation by default. Restrict TCP port 5000 so only approved LAN clients can connect.

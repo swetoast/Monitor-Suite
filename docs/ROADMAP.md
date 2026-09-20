@@ -206,7 +206,7 @@ Required acceptance checks:
 Implemented in 2.7.0 with startup-grace validation, authenticated health-contract verification, version matching, failure classification, token-safe diagnostics, and regression coverage for unrelated processes occupying the configured port. The Home Assistant integration remains the only separate consumer-side roadmap item.
 
 
-## 8. amd64 device and telemetry support (planned)
+## 8. amd64 device and telemetry support (in progress)
 
 Monitor Suite Agent has so far been validated only on arm64 Raspberry Pi 5 hardware. Every platform-specific reader in the collector currently assumes that environment: hardware identity comes from `/proc/device-tree/model`, CPU temperature is selected by the `cpu-thermal` thermal-zone type, cooling is discovered from a `pwm-fan` device, and power and firmware health come exclusively from `vcgencmd`. On an amd64 host none of those sources exist, so the affected values collapse to `unavailable` and the firmware probes fail on every cycle.
 
@@ -216,6 +216,29 @@ This section covers making the agent operate correctly on amd64 (`x86_64`) hosts
 - **New platform data is exposed only as additional attributes on existing `/status` objects**, never as new sensors, and only when it carries clear, independent meaning. Every added attribute is still subject to meaning-before-availability, honest classification, and the privacy rules below. Values collected internally to classify a state do not automatically become attributes.
 
 Honest classification continues to govern gaps: where amd64 has no trustworthy equivalent of a Raspberry Pi source, the affected field reports `unavailable` rather than an invented value.
+
+### 8.0 Phase 0: architecture routing and contract lock
+
+Phase 0 establishes the platform boundary before any amd64-specific telemetry source is added.
+
+- Detect the machine architecture once with `platform.machine()`.
+- Normalize `aarch64` and `arm64` to `aarch64`.
+- Normalize `x86_64` and `amd64` to `amd64`.
+- Reject unsupported architectures explicitly.
+- Route `aarch64` through the existing Raspberry Pi collection behavior unchanged.
+- Route `amd64` through the x86 capability path without running Raspberry Pi-only firmware commands.
+- Keep capability discovery out of architecture detection. Architecture detection selects the path; each collector later determines which measurements the machine actually provides.
+
+The existing API and Home Assistant contract is the compatibility baseline for both architectures. amd64 must remain as close to the existing aarch64 implementation as the available hardware permits. Endpoint paths, top-level objects, core state fields, field types, units, Home Assistant entity IDs, device classes, state classes, icons, availability behavior, and the basic attribute structure remain stable. Platform differences belong primarily inside agent collectors. A small number of optional, typed, meaningful attributes may differ when hardware capabilities differ, but core sensor state and meaning must not change. Raspberry Pi telemetry must not be redesigned, renamed, consolidated, degraded, or otherwise changed as part of amd64 support.
+
+Phase 0 acceptance criteria:
+
+- Physical aarch64 reports `architecture=aarch64` and selects the Raspberry Pi path.
+- Physical x86_64 reports `architecture=amd64` and selects the x86 path.
+- amd64 never executes `vcgencmd`.
+- Raspberry Pi fixture output remains unchanged.
+- `/status` and `/health` retain their existing schemas and core state semantics.
+- Architecture-specific gaps do not degrade daemon health merely because a Raspberry Pi-only source does not exist.
 
 Because the public API models forbid unknown fields (`extra="forbid"`, enforced by the API-contract regression tests), any attribute added under this section must be added to the typed response model in the same change. "Attributes can be added to endpoints" is therefore a deliberate, typed contract change, not an open passthrough of raw data.
 
@@ -229,7 +252,7 @@ The following synthetic-from-verified x86 fixtures are preserved as the authorit
 - `tests/fixtures/monitor_suite_x86_power_probe.txt` — RAPL powercap energy counters, `perf` RAPL events, and `turbostat` power metrics, with `recommended_source=powercap_energy_delta`.
 - `tests/fixtures/monitor_suite_amd64_fan_fixture.txt` — Super-I/O fan inputs, PWM readback, and ACPI `Fan` cooling devices.
 
-All fixtures are read-only and already privacy-scrubbed: no hostnames, addresses, hardware serials, UUIDs, WWNs, device paths, or raw command output. That scrub level is the acceptance baseline for anything derived from them.
+All fixtures are derived from observations on verified physical x86 machines. They are read-only and privacy-scrubbed: no hostnames, addresses, hardware serials, UUIDs, WWNs, personal paths, or raw command output. That scrub level is the acceptance baseline for anything derived from them. Exact counts are stored per fixture and regression-tested; partitions are never included in `physical_disk_count`, and only exact `pwmN` files are included in `pwm_input_count`.
 
 ### 8.2 Platform capability layer (enabling refactor)
 
@@ -242,15 +265,16 @@ Introduce an internal platform-capability layer that selects sources by detected
 
 This refactor is a prerequisite for the remaining subsections and is expected to land first.
 
-### 8.3 Device identity (attributes on `device`)
+### 8.3 Device identity (implemented)
 
-Extend hardware identification so amd64 hosts report a meaningful model instead of the `Unknown Raspberry Pi` fallback.
+Keep amd64 device identity aligned with the existing aarch64 API contract.
 
-- Read `device.model` from `/sys/class/dmi/id/product_name` when device-tree model is absent, falling back to a neutral `Unknown System` string. `device.model` remains an existing field, not a new sensor.
-- Optionally add, as attributes on the existing `device` object, `system_vendor` (`/sys/class/dmi/id/sys_vendor`), `board_name` (`/sys/class/dmi/id/board_name`), and a decoded `chassis_type` derived from the DMI chassis-type code (for example `3` becomes `desktop`).
-- Never expose the product UUID, chassis or board serial number, or asset tag. These are present in DMI and are excluded for the same reason drive serials are excluded in section 2.
+- Populate the existing `device.model` field from `/sys/class/dmi/id/product_name` when the device-tree model is unavailable.
+- Fall back to `Unknown System` when the DMI product name is unavailable.
+- Do not add DMI-specific device attributes. `system_vendor`, `board_name`, `chassis_type`, serial numbers, UUIDs, and asset tags remain internal or unread.
+- Preserve the existing `device` object shape: `model`, `operating_system`, `kernel_version`, and `architecture`.
 
-### 8.4 CPU temperature (existing `cpu.temperature_c` sensor, unchanged surface)
+### 8.4 CPU temperature (implemented; existing `cpu.temperature_c` surface unchanged)
 
 Extend CPU-temperature source selection so the existing `cpu.temperature_c` value resolves on amd64:
 
@@ -260,20 +284,31 @@ Extend CPU-temperature source selection so the existing `cpu.temperature_c` valu
 
 No new sensor is created. Only the internal selection widens.
 
-### 8.5 Cooling (existing `cooling` object)
+### 8.5 Cooling (implemented; existing `cooling` state preserved)
 
-amd64 cooling appears as generic ACPI `Fan` cooling devices plus Super-I/O fan inputs (for example `nct6798`) rather than a single `pwm-fan`. The `amd64_fan_fixture` shows six fan inputs across one provider with several unpopulated channels.
+amd64 cooling can expose multiple exact `fanN_input` readings instead of the Raspberry Pi single-fan source. The existing cooling sensor contract remains authoritative.
 
-- Extend cooling discovery to recognise ACPI `Fan` cooling devices for `cooling.state` and Super-I/O `fanN_input` channels for `cooling.fan_speed_rpm`.
-- Because `cooling.fan_speed_rpm` is a single value, define a deterministic selection policy across multiple fan channels (for example the highest active RPM, selected by driver and label), and document it. A `0` RPM or unpopulated header is treated as "not a reading," never as a real zero, consistent with section 12.7.
-- An `active_fan_count` attribute may be added to the existing `cooling` object where it carries clear meaning. No per-fan sensors are created.
-- Fan and PWM control stay out of scope. This remains a read-only agent.
+- Keep `cooling.fan_speed_rpm` as the core numeric state with unit RPM.
+- On amd64, calculate `fan_speed_rpm` as the rounded arithmetic mean of valid active fan readings greater than `0 RPM`.
+- Keep `cooling.state` as `active`, `idle`, or `unavailable`.
+- Add optional typed attributes `fan_count` and `active_fan_count` on amd64.
+- `fan_count` is the number of valid exact `fanN_input` readings, including valid zero-RPM readings.
+- `active_fan_count` is the number of valid exact `fanN_input` readings greater than zero.
+- Report `idle` with `fan_speed_rpm=0` when valid fan inputs exist but all report zero.
+- Report `unavailable` when no valid exact `fanN_input` reading exists.
+- Do not expose individual RPM values, a selected fan RPM, PWM telemetry, or inferred fan roles.
+- Count only exact `fanN_input` and exact `pwmN` files. Never write PWM values.
+- Logical ACPI thermal cooling devices alone do not qualify as useful cooling telemetry.
+- Preserve the existing Raspberry Pi cooling behavior unchanged.
 
-### 8.6 Power (existing `power` object; new measured source)
+The verified desktop evidence contains six valid fan inputs, five active fans, one zero-RPM fan, and five exact PWM channels. Its expected amd64 cooling result is `fan_speed_rpm=836`, `fan_count=6`, `active_fan_count=5`, and `state=active`.
+
+### 8.6 Power (implemented; existing `power.value_w` state preserved)
 
 amd64 has a genuine measured-power path through RAPL powercap energy counters, which the power probe fixture marks as the recommended source. This is the amd64 analogue of the Raspberry Pi `internal_rails` method and must be classified as honestly.
 
-- Add a measured amd64 power method that samples the `intel-rapl`/`amd`-family powercap `energy_uj` counter twice across the existing power interval and divides the wrapped-safe energy delta by elapsed time.
+- Use a separate root-only, networkless collector to sample the package `energy_uj` counter twice and divide the wrap-safe energy delta by elapsed time.
+- Write only a strict, sanitized, atomic cache containing schema version, generation time, package watts, source, and domain. The unprivileged API validates freshness and schema before using it.
 - Extend `power.source` with a new measured value, `rapl_package`, and update the typed model and design accordingly. Selection order on amd64 becomes RAPL package energy delta, then a calibrated `cpu_estimate` only if a profile or override exists, then `unavailable`.
 - amd64 hosts have no built-in power profile, so `cpu_estimate` applies only when `idle_power_override_w` and `full_load_power_override_w` are configured. Absent both, an amd64 host with RAPL reports `rapl_package`, and one without reports `unavailable`.
 - Carry a caveat mirroring the PMIC caveat in section 13.2: the package domain is not full board or wall power, and CPU/SoC power limits and TDP values are never reported as live power. This matches the fixture note that power limits and TDP are not live measurements.
@@ -281,32 +316,36 @@ amd64 has a genuine measured-power path through RAPL powercap energy counters, w
 
 External input-power sensing remains explicitly out of the roadmap, unchanged from the exclusions above.
 
-### 8.7 Firmware health (existing `health` object)
+### 8.7 Firmware health (implemented for initial amd64 support)
 
 The `health` object is currently derived entirely from Raspberry Pi firmware throttling bits, for which amd64 has no direct equivalent.
 
 - Phase 1: on amd64, `health.status` and its sub-fields report `unavailable`. This is the honest default and must not be filled with invented conditions. Health reporting `unavailable` on a supported platform is treated as an expected platform capability gap, not a probe failure (see 8.8).
 - Phase 2 (optional, only if a clear definition is agreed): derive a defined amd64 health from trustworthy signals, such as `thermal_state` from proximity to the `coretemp`/`k10temp` critical trip and `performance_state` from an active RAPL constraint. Any such mapping is added as defined fields with documented thresholds, never as heuristic guesses, and reuses the existing `health` states.
 
-### 8.8 Scheduling and failure isolation
+### 8.8 Scheduling and failure isolation (implemented)
 
 Ensure platform capability gaps do not degrade daemon health:
 
 - Distinguish "unsupported on this platform" from "expected probe failed." A source that is legitimately absent on amd64 (Pi firmware health, PMIC rails) reports `unavailable` without incrementing probe-failure accounting or moving `/health` to `degraded`.
 - Removing the unconditional `vcgencmd` calls on amd64 eliminates the per-cycle power-probe failures the current code would record on that platform.
-- Preserve failure isolation, last-known-good retention, and the stateless design unchanged. No new local state and no new runtime dependency are introduced; RAPL, DMI, `coretemp`, and Super-I/O reads all use existing sysfs access.
+- Preserve failure isolation, last-known-good retention, and the stateless design unchanged. The RAPL cache is runtime-only under `/run`, and no new runtime dependency is introduced.
 
-### 8.9 Testing and acceptance
+### 8.9 Testing and acceptance (implemented; physical release validation pending)
 
 Add regression coverage driven by the fixtures in 8.1:
 
-- Device identity resolves from DMI with no serial, UUID, or asset tag exposed.
+- Device identity resolves only the existing `device.model` field from DMI; no vendor, board, chassis, serial, UUID, or asset-tag fields are exposed.
 - CPU temperature resolves from `coretemp`/`x86_pkg_temp` and from `k10temp` labels.
-- Cooling resolves from ACPI `Fan` devices and Super-I/O fan inputs, with the documented multi-fan selection policy and correct handling of unpopulated channels.
+- Cooling preserves `fan_speed_rpm` as the core state, averages valid active exact `fanN_input` readings, exposes only `fan_count` and `active_fan_count` as optional attributes, and correctly handles zero or unavailable inputs.
 - Power resolves to `rapl_package` from an energy-counter delta, falls back correctly, and never reports TDP or a power limit as live power.
 - Health reports `unavailable` on amd64 in phase 1 without degrading daemon health.
 - Privacy scrub holds: no hostnames, addresses, serials, UUIDs, WWNs, or device paths in any amd64-derived field.
 - The approved sensor and entity list in sections 1 through 3 is unchanged, and `/status` and `/health` still validate under `extra="forbid"` with the added attributes present in the typed models.
+
+Implementation acceptance now includes direct fixture-driven regression tests for exact x86 counts, package-temperature selection, desktop multi-fan cooling, privacy scrubbing, RAPL calculation and cache validation, API-model strictness, amd64 health behavior, and the unchanged Raspberry Pi regression suite.
+
+The remaining acceptance work is deployment validation on physical amd64 hardware. Software tests alone do not prove service permissions, kernel driver availability, sysfs visibility, or systemd behavior on a target machine.
 
 ### 8.10 Explicitly outside amd64 support (initial)
 

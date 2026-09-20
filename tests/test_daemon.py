@@ -213,6 +213,7 @@ def test_full_sampler_snapshot_from_pi5_fixture_tree(tmp_path: Path) -> None:
         command_runner=command,
         monotonic=lambda: next(clock),
         now=lambda: datetime(2026, 9, 19, 8, 25, 28, tzinfo=timezone.utc),
+        machine=lambda: "aarch64",
     )
     first = sampler._collect_sync()
     assert first["device"]["model"] == "Raspberry Pi 5 Model B Rev 1.0"

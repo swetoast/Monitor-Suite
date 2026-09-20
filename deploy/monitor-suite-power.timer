@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Monitor Suite RAPL power collector every 5 seconds
+
+[Timer]
+OnBootSec=5s
+OnUnitActiveSec=5s
+AccuracySec=1s
+Unit=monitor-suite-power.service
+
+[Install]
+WantedBy=timers.target

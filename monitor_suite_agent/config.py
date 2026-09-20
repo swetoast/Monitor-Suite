@@ -130,6 +130,8 @@ class Settings:
     raid_active_interval_seconds: float = 2.0
     smart_cache_file: Path = Path("/run/monitor-suite-agent/smart.json")
     smart_cache_max_age_seconds: float = 1800.0
+    power_cache_file: Path = Path("/run/monitor-suite-agent/power.json")
+    power_cache_max_age_seconds: float = 15.0
     command_timeout_seconds: float = 2.0
     stale_after_seconds: float = 5.0
     idle_power_override_w: float | None = None
@@ -168,6 +170,8 @@ class Settings:
             raid_active_interval_seconds=_positive_float("MONITOR_SUITE_RAID_ACTIVE_INTERVAL", 2.0),
             smart_cache_file=Path(os.getenv("MONITOR_SUITE_SMART_CACHE", "/run/monitor-suite-agent/smart.json")),
             smart_cache_max_age_seconds=_positive_float("MONITOR_SUITE_SMART_CACHE_MAX_AGE", 1800.0),
+            power_cache_file=Path(os.getenv("MONITOR_SUITE_POWER_CACHE", "/run/monitor-suite-agent/power.json")),
+            power_cache_max_age_seconds=_positive_float("MONITOR_SUITE_POWER_CACHE_MAX_AGE", 15.0),
             command_timeout_seconds=_positive_float("MONITOR_SUITE_COMMAND_TIMEOUT", 2.0),
             stale_after_seconds=stale,
             idle_power_override_w=idle,

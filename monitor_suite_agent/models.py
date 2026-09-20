@@ -32,13 +32,16 @@ class UsageStatus(APIModel):
 
 class PowerStatus(APIModel):
     value_w: float | None
-    source: Literal["internal_rails", "cpu_estimate", "unavailable"]
+    source: Literal["internal_rails", "cpu_estimate", "rapl_package", "unavailable"]
     input_voltage_v: float | None
+    domain: Literal["package"] | None = None
 
 
 class CoolingStatus(APIModel):
     state: Literal["idle", "active", "unavailable"]
     fan_speed_rpm: int | None
+    fan_count: int | None = None
+    active_fan_count: int | None = None
 
 
 class NetworkStatus(APIModel):

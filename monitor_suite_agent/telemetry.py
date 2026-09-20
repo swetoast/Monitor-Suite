@@ -16,7 +16,7 @@ import platform
 import re
 import subprocess
 import time
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping
 
 from .config import Settings
 from .power import PowerProfile, estimate_power_w, select_profile
@@ -24,6 +24,22 @@ from .power import PowerProfile, estimate_power_w, select_profile
 _LOGGER = logging.getLogger(__name__)
 _PM_RE = re.compile(r"^\s*([A-Za-z0-9_]+)\s+(current|volt)\(\d+\)=([0-9.]+)([AV])\s*$")
 _THROTTLED_RE = re.compile(r"throttled=0x([0-9a-fA-F]+)")
+
+
+class UnsupportedArchitectureError(RuntimeError):
+    """Raised when the Linux machine architecture is not supported."""
+
+
+def detect_architecture(machine: str | None = None) -> Literal["aarch64", "amd64"]:
+    """Normalize the two supported Linux machine architecture names."""
+    value = (platform.machine() if machine is None else machine).strip().lower()
+    if value in {"aarch64", "arm64"}:
+        return "aarch64"
+    if value in {"x86_64", "amd64"}:
+        return "amd64"
+    raise UnsupportedArchitectureError(
+        f"Unsupported architecture: {value or 'unknown'}"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +54,7 @@ class Paths:
     proc_diskstats: Path = Path("/proc/diskstats")
     proc_net_route: Path = Path("/proc/net/route")
     device_model: Path = Path("/proc/device-tree/model")
+    dmi_root: Path = Path("/sys/class/dmi/id")
     os_release: Path = Path("/etc/os-release")
     cpu_root: Path = Path("/sys/devices/system/cpu")
     thermal_root: Path = Path("/sys/class/thermal")
@@ -115,8 +132,13 @@ def _smart_device_in_standby(text: str | None) -> bool:
 
 
 def read_model(path: Path) -> str:
-    """Read the hardware model without exposing the board serial."""
+    """Read the Raspberry Pi model without exposing the board serial."""
     return _read_text(path) or "Unknown Raspberry Pi"
+
+
+def read_dmi_model(dmi_root: Path) -> str:
+    """Read only the existing public model field from DMI."""
+    return _read_text(dmi_root / "product_name") or "Unknown System"
 
 
 def parse_os_release(text: str | None) -> str:
@@ -183,14 +205,48 @@ def read_max_frequency_mhz(cpu_root: Path) -> float | None:
     return None
 
 
+def _plausible_cpu_temperature(raw: str | None) -> float | None:
+    value = _millivalue(raw)
+    if value is None or not -40.0 <= value <= 125.0:
+        return None
+    return value
+
+
 def read_cpu_temperature_c(thermal_root: Path, hwmon_root: Path) -> float | None:
-    """Read CPU temperature by semantic thermal or hwmon identity."""
-    for zone in sorted(thermal_root.glob("thermal_zone*")):
-        if (_read_text(zone / "type") or "").lower() in {"cpu-thermal", "cpu_thermal"}:
-            return _millivalue(_read_text(zone / "temp"))
+    """Read one package-level CPU temperature by semantic source identity."""
+    for accepted_type in ("cpu-thermal", "cpu_thermal", "x86_pkg_temp"):
+        for zone in sorted(thermal_root.glob("thermal_zone*")):
+            if (_read_text(zone / "type") or "").lower() == accepted_type:
+                value = _plausible_cpu_temperature(_read_text(zone / "temp"))
+                if value is not None:
+                    return value
+
     for monitor in sorted(hwmon_root.glob("hwmon*")):
-        if (_read_text(monitor / "name") or "").lower() in {"cpu_thermal", "cpu-thermal"}:
-            return _millivalue(_read_text(monitor / "temp1_input"))
+        name = (_read_text(monitor / "name") or "").lower()
+        if name in {"cpu_thermal", "cpu-thermal"}:
+            value = _plausible_cpu_temperature(_read_text(monitor / "temp1_input"))
+            if value is not None:
+                return value
+        if name not in {"coretemp", "k10temp"}:
+            continue
+        labelled: list[tuple[str, Path]] = []
+        for label_path in sorted(monitor.glob("temp*_label")):
+            match = re.fullmatch(r"temp([0-9]+)_label", label_path.name)
+            if match:
+                labelled.append(
+                    ((_read_text(label_path) or "").lower(), monitor / f"temp{match.group(1)}_input")
+                )
+        preferred = (
+            ("package id 0",)
+            if name == "coretemp"
+            else ("tctl", "tccd1", "tccd2", "tccd3", "tccd4")
+        )
+        for expected_label in preferred:
+            for label, input_path in labelled:
+                if label == expected_label:
+                    value = _plausible_cpu_temperature(_read_text(input_path))
+                    if value is not None:
+                        return value
     return None
 
 
@@ -503,6 +559,27 @@ def read_cooling(cooling_path: Path | None, fan_path: Path | None) -> dict[str, 
     return {"state": "active" if active else "idle", "fan_speed_rpm": rpm}
 
 
+def read_amd64_cooling(hwmon_root: Path) -> dict[str, str | int | None]:
+    """Return average active RPM and concise counts from exact fan inputs."""
+    readings: list[int] = []
+    for monitor in sorted(hwmon_root.glob("hwmon*")):
+        for path in sorted(monitor.glob("fan*_input")):
+            if not re.fullmatch(r"fan[0-9]+_input", path.name):
+                continue
+            value = _read_int(path)
+            if value is not None and value >= 0:
+                readings.append(value)
+    if not readings:
+        return {"state": "unavailable", "fan_speed_rpm": None}
+    active = [value for value in readings if value > 0]
+    return {
+        "state": "active" if active else "idle",
+        "fan_speed_rpm": round(sum(active) / len(active)) if active else 0,
+        "fan_count": len(readings),
+        "active_fan_count": len(active),
+    }
+
+
 def _read_int(path: Path) -> int | None:
     text = _read_text(path)
     if text is None:
@@ -789,6 +866,55 @@ def _unavailable_smart_devices(devices: list[dict[str, Any]]) -> list[dict[str, 
     ]
 
 
+def read_power_cache(
+    path: Path,
+    max_age_seconds: float,
+    now: datetime,
+) -> tuple[dict[str, Any], bool]:
+    """Read one current, strictly validated sanitized RAPL cache."""
+    unavailable = {
+        "value_w": None,
+        "source": "unavailable",
+        "input_voltage_v": None,
+    }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or set(data) != {
+            "schema_version",
+            "generated_at",
+            "value_w",
+            "source",
+            "domain",
+        }:
+            return unavailable, False
+        if data["schema_version"] != 1:
+            return unavailable, False
+        generated = datetime.fromisoformat(str(data["generated_at"]).replace("Z", "+00:00"))
+        if generated.tzinfo is None:
+            return unavailable, False
+        age = (now - generated.astimezone(timezone.utc)).total_seconds()
+        value = data["value_w"]
+        if (
+            age < -5.0
+            or age > max_age_seconds
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or not 0 <= float(value) <= 10_000
+            or data["source"] != "rapl_package"
+            or data["domain"] != "package"
+        ):
+            return unavailable, False
+        return {
+            "value_w": round(float(value), 3),
+            "source": "rapl_package",
+            "input_voltage_v": None,
+            "domain": "package",
+        }, True
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return unavailable, False
+
+
 def read_smart_cache(
     path: Path,
     max_age_seconds: float,
@@ -907,12 +1033,14 @@ class TelemetrySampler:
         command_runner: Callable[[list[str], float], str | None] = run_command,
         monotonic: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        machine: Callable[[], str] = platform.machine,
     ) -> None:
         self.settings = settings
         self.paths = paths or Paths()
         self._run_command = command_runner
         self._monotonic = monotonic
         self._now = now
+        self.architecture = detect_architecture(machine())
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self._snapshot: dict[str, Any] | None = None
@@ -937,18 +1065,30 @@ class TelemetrySampler:
         }
         self._state_log: dict[str, str] = {}
         self._raid_state_log: dict[str, str] = {}
-        self.model = read_model(self.paths.device_model)
-        self.profile: PowerProfile | None = select_profile(
-            self.model,
-            settings.idle_power_override_w,
-            settings.full_load_power_override_w,
+        self.model = (
+            read_model(self.paths.device_model)
+            if self.architecture == "aarch64"
+            else read_dmi_model(self.paths.dmi_root)
+        )
+        self.profile: PowerProfile | None = (
+            select_profile(
+                self.model,
+                settings.idle_power_override_w,
+                settings.full_load_power_override_w,
+            )
+            if self.architecture == "aarch64"
+            else None
         )
         self.interface = select_network_interface(
             self.paths.net_root, self.paths.proc_net_route, self.settings.network_interface
         )
         self.max_frequency_mhz = read_max_frequency_mhz(self.paths.cpu_root)
         self.root_device = resolve_root_device(_read_text(self.paths.proc_mountinfo), self.paths.block_root)
-        self.cooling_path, self.fan_path = discover_cooling(self.paths.thermal_root, self.paths.hwmon_root)
+        self.cooling_path, self.fan_path = (
+            discover_cooling(self.paths.thermal_root, self.paths.hwmon_root)
+            if self.architecture == "aarch64"
+            else (None, None)
+        )
         self._booted_at = booted_at(
             parse_uptime_seconds(_read_text(self.paths.proc_uptime)), self._now()
         )
@@ -956,7 +1096,7 @@ class TelemetrySampler:
             "model": self.model,
             "operating_system": parse_os_release(_read_text(self.paths.os_release)),
             "kernel_version": platform.release(),
-            "architecture": platform.machine(),
+            "architecture": self.architecture,
         }
 
     def _record_probe(self, name: str, success: bool, now: float) -> None:
@@ -1112,7 +1252,7 @@ class TelemetrySampler:
             or (self.cooling_path is not None and not self.cooling_path.exists())
             or (self.fan_path is not None and not self.fan_path.exists())
         )
-        if cooling_missing:
+        if self.architecture == "aarch64" and cooling_missing:
             previous_cooling = (self.cooling_path, self.fan_path)
             selected_cooling = discover_cooling(self.paths.thermal_root, self.paths.hwmon_root)
             self.cooling_path, self.fan_path = selected_cooling
@@ -1130,59 +1270,83 @@ class TelemetrySampler:
         max_frequency = self.max_frequency_mhz
 
         if self._thermal_schedule.due(mono):
-            temperature_now = read_cpu_temperature_c(self.paths.thermal_root, self.paths.hwmon_root)
-            cooling_now = read_cooling(self.cooling_path, self.fan_path)
-            thermal_ok = temperature_now is not None
-            cooling_expected = self.cooling_path is not None or self.fan_path is not None
-            cooling_ok = not cooling_expected or cooling_now["state"] != "unavailable"
-            self._record_probe("thermal", thermal_ok, mono)
-            self._record_probe("cooling", cooling_ok, mono)
-            if thermal_ok:
+            if self.architecture == "aarch64":
+                temperature_now = read_cpu_temperature_c(
+                    self.paths.thermal_root, self.paths.hwmon_root
+                )
+                cooling_now = read_cooling(self.cooling_path, self.fan_path)
+                thermal_ok = temperature_now is not None
+                cooling_expected = self.cooling_path is not None or self.fan_path is not None
+                cooling_ok = not cooling_expected or cooling_now["state"] != "unavailable"
+                self._record_probe("thermal", thermal_ok, mono)
+                self._record_probe("cooling", cooling_ok, mono)
+                if thermal_ok:
+                    self._hardware_values["temperature_c"] = temperature_now
+                elif self._probe_health["thermal"].available is False:
+                    self._hardware_values["temperature_c"] = None
+                if cooling_ok:
+                    self._hardware_values["cooling"] = cooling_now
+                elif self._probe_health["cooling"].available is False:
+                    self._hardware_values["cooling"] = {
+                        "state": "unavailable",
+                        "fan_speed_rpm": None,
+                    }
+            else:
+                temperature_now = read_cpu_temperature_c(
+                    self.paths.thermal_root, self.paths.hwmon_root
+                )
                 self._hardware_values["temperature_c"] = temperature_now
-            elif self._probe_health["thermal"].available is False:
-                self._hardware_values["temperature_c"] = None
-            if cooling_ok:
-                self._hardware_values["cooling"] = cooling_now
-            elif self._probe_health["cooling"].available is False:
-                self._hardware_values["cooling"] = {"state": "unavailable", "fan_speed_rpm": None}
+                self._hardware_values["cooling"] = read_amd64_cooling(
+                    self.paths.hwmon_root
+                )
             self._thermal_schedule.schedule(mono, self.settings.thermal_sample_interval_seconds)
 
         if self._power_schedule.due(mono):
-            throttle_text = self._run_command(
-                ["vcgencmd", "get_throttled"], self.settings.command_timeout_seconds
-            )
-            flags = parse_throttling(throttle_text)
-            pmic = parse_pmic(
-                self._run_command(
-                    ["vcgencmd", "pmic_read_adc"], self.settings.command_timeout_seconds
+            if self.architecture == "aarch64":
+                throttle_text = self._run_command(
+                    ["vcgencmd", "get_throttled"], self.settings.command_timeout_seconds
                 )
-            )
-            paired = [float(rail["power_w"]) for rail in pmic.values() if rail["power_w"] is not None]
-            input_voltage = pmic.get("EXT5V", {}).get("voltage_v")
-            if paired:
-                power = {
-                    "value_w": round(sum(paired), 3),
-                    "source": "internal_rails",
-                    "input_voltage_v": input_voltage,
-                }
-            elif self.profile is not None:
-                power = {
-                    "value_w": estimate_power_w(smoothed, frequency, max_frequency, self.profile),
-                    "source": "cpu_estimate",
-                    "input_voltage_v": input_voltage,
-                }
+                flags = parse_throttling(throttle_text)
+                pmic = parse_pmic(
+                    self._run_command(
+                        ["vcgencmd", "pmic_read_adc"], self.settings.command_timeout_seconds
+                    )
+                )
+                paired = [float(rail["power_w"]) for rail in pmic.values() if rail["power_w"] is not None]
+                input_voltage = pmic.get("EXT5V", {}).get("voltage_v")
+                if paired:
+                    power = {
+                        "value_w": round(sum(paired), 3),
+                        "source": "internal_rails",
+                        "input_voltage_v": input_voltage,
+                    }
+                elif self.profile is not None:
+                    power = {
+                        "value_w": estimate_power_w(smoothed, frequency, max_frequency, self.profile),
+                        "source": "cpu_estimate",
+                        "input_voltage_v": input_voltage,
+                    }
+                else:
+                    power = {"value_w": None, "source": "unavailable", "input_voltage_v": input_voltage}
+                power_ok = flags is not None and power["source"] != "unavailable"
+                self._record_probe("power", power_ok, mono)
+                if power_ok:
+                    self._hardware_values["power"] = power
+                    self._hardware_values["flags"] = flags
+                elif self._probe_health["power"].available is False:
+                    self._hardware_values["power"] = {
+                        "value_w": None, "source": "unavailable", "input_voltage_v": None
+                    }
+                    self._hardware_values["flags"] = None
             else:
-                power = {"value_w": None, "source": "unavailable", "input_voltage_v": input_voltage}
-            power_ok = flags is not None and power["source"] != "unavailable"
-            self._record_probe("power", power_ok, mono)
-            if power_ok:
-                self._hardware_values["power"] = power
-                self._hardware_values["flags"] = flags
-            elif self._probe_health["power"].available is False:
-                self._hardware_values["power"] = {
-                    "value_w": None, "source": "unavailable", "input_voltage_v": None
-                }
+                cached_power, _power_cache_current = read_power_cache(
+                    self.settings.power_cache_file,
+                    self.settings.power_cache_max_age_seconds,
+                    self._now(),
+                )
+                self._hardware_values["power"] = cached_power
                 self._hardware_values["flags"] = None
+                self._record_probe("power", True, mono)
             self._power_schedule.schedule(mono, self.settings.power_sample_interval_seconds)
 
         temperature = self._hardware_values.get("temperature_c")
