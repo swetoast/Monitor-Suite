@@ -25,7 +25,7 @@ def discover_package_zone(powercap_root: Path) -> Path | None:
         name_path = energy_path.parent / "name"
         try:
             name = name_path.read_text(encoding="ascii").strip().lower()
-        except OSError:
+        except (OSError, UnicodeError):
             continue
         if name.startswith("package-") and os.access(energy_path, os.R_OK):
             return energy_path.parent

@@ -22,6 +22,14 @@
 - Moved SMART cache parsing from every fast tick to the slow telemetry schedule.
 - Prevented automatic network selection from choosing VPN tunnels and virtual bridges, including WireGuard, TUN/TAP, Tailscale, ZeroTier, and libvirt interfaces.
 - Kept surrounding API-key whitespace trimming while continuing to reject non-ASCII and internal whitespace.
+- Corrected cellular interface handling so physical `wwan*` modems are eligible for automatic and explicit selection.
+- Unified explicit network-interface validation with the selector denylist so tunnel and virtual choices fail clearly during startup.
+- Made the SMART collector self-heal when its existing cache contains valid non-object JSON.
+- Rejected non-finite floating-point configuration values to prevent frozen or busy-looping telemetry schedules.
+- Rejected catch-all trusted-proxy networks such as `0.0.0.0/0` and `::/0`.
+- Hardened RAPL zone discovery against non-ASCII kernel name files.
+- Corrected RAID redundancy reporting so a degraded array remains `reduced` when the sysfs `degraded` count is unavailable and missing members are inferred from member state.
+- Hardened live SMART parsing against non-object JSON and present-but-null smartctl sections so one malformed device cannot abort the complete collection run.
 
 ## 2.8.1
 

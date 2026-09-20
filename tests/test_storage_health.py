@@ -4,6 +4,8 @@ import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from monitor_suite_agent.telemetry import (
     discover_smart_devices,
     parse_smart_json,
@@ -378,4 +380,105 @@ def test_smart_entry_schema_drift_is_isolated_and_new_device_names_are_supported
     assert cleaned == [
         {"device": "vda", "status": "healthy", "temperature_c": 30.0},
         {"device": "mmcblk0", "status": "warning", "temperature_c": 42.0},
+    ]
+
+
+def test_smart_collector_non_object_cache_self_heals(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from monitor_suite_agent import smart_collector
+
+    cache = tmp_path / "smart.json"
+    for payload in ("null", "[1,2,3]", '"hi"', "42"):
+        cache.write_text(payload)
+        monkeypatch.setattr(smart_collector, "read_smart_devices", lambda *args: [])
+        assert smart_collector.collect(cache=cache, timeout=1.0) == 0
+        data = json.loads(cache.read_text())
+        assert data["schema_version"] == 1
+        assert data["devices"] == []
+
+
+def test_degraded_raid_without_degraded_file_reports_reduced_redundancy(
+    tmp_path: Path,
+) -> None:
+    md = tmp_path / "md0" / "md"
+    md.mkdir(parents=True)
+    (md / "level").write_text("raid1")
+    (md / "array_state").write_text("clean")
+    (md / "raid_disks").write_text("2")
+    (md / "sync_action").write_text("idle")
+    first = md / "dev-sda"
+    second = md / "dev-sdb"
+    first.mkdir()
+    second.mkdir()
+    (first / "state").write_text("in_sync")
+    (second / "state").write_text("faulty")
+
+    assert read_raid_arrays(tmp_path) == [
+        {
+            "name": "md0",
+            "status": "degraded",
+            "raid_level": "RAID1",
+            "active_members": 1,
+            "expected_members": 2,
+            "failed_members": None,
+            "redundancy": "reduced",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "smart_support",
+        "smart_status",
+        "temperature",
+        "ata_smart_data",
+        "ata_smart_attributes",
+        "nvme_smart_health_information_log",
+    ],
+)
+def test_smart_parser_handles_present_but_null_sections(field: str) -> None:
+    payload = {"smart_support": {"available": True}, field: None}
+    result = parse_smart_json(json.dumps(payload), "sda")
+    if field == "smart_support":
+        assert result is None
+    else:
+        assert result == {
+            "device": "sda",
+            "status": "healthy",
+            "temperature_c": None,
+        }
+
+
+@pytest.mark.parametrize("payload", ["null", "[1,2,3]", '{"smartctl": null}'])
+def test_smart_standby_parser_handles_non_object_and_null_sections(payload: str) -> None:
+    from monitor_suite_agent.telemetry import _smart_device_in_standby
+
+    assert _smart_device_in_standby(payload) is False
+
+
+def test_one_malformed_smart_device_does_not_abort_collection(tmp_path: Path) -> None:
+    for name in ("sda", "sdb"):
+        (tmp_path / name / "device").mkdir(parents=True)
+
+    responses = iter(
+        [
+            '{"smart_support":null}',
+            json.dumps(
+                {
+                    "smart_support": {"available": True},
+                    "smart_status": {"passed": True},
+                    "temperature": {"current": 31},
+                }
+            ),
+        ]
+    )
+
+    def runner(args: list[str], _timeout: float) -> str | None:
+        if "--scan-open" in args:
+            return None
+        return next(responses)
+
+    assert read_smart_devices(tmp_path, runner, 2.0) == [
+        {"device": "sda", "status": "unavailable", "temperature_c": None},
+        {"device": "sdb", "status": "healthy", "temperature_c": 31.0},
     ]

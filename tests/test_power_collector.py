@@ -78,3 +78,15 @@ def test_power_cache_rejects_extra_or_invalid_fields(tmp_path: Path) -> None:
     power, current = read_power_cache(cache, 15.0, now)
     assert current is False
     assert power["source"] == "unavailable"
+
+
+def test_discover_package_zone_ignores_non_ascii_name(tmp_path: Path) -> None:
+    bad = tmp_path / "intel-rapl:0"
+    good = tmp_path / "intel-rapl:1"
+    for zone in (bad, good):
+        zone.mkdir()
+        (zone / "energy_uj").write_text("100")
+    (bad / "name").write_bytes(b"package-\xff")
+    (good / "name").write_text("package-1")
+
+    assert discover_package_zone(tmp_path) == good

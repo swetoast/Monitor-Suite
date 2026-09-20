@@ -449,7 +449,7 @@ def test_additional_virtual_interface_prefixes_are_excluded(tmp_path: Path) -> N
     net = tmp_path / "net"
     route = tmp_path / "route"
     route.write_text("Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n")
-    for name in ("wwan0", "dummy0", "vnet0", "vxlan0", "wlan0"):
+    for name in ("dummy0", "vnet0", "vxlan0", "wlan0"):
         for counter in ("rx_bytes", "tx_bytes"):
             path = net / name / "statistics" / counter
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -457,3 +457,22 @@ def test_additional_virtual_interface_prefixes_are_excluded(tmp_path: Path) -> N
     (net / "wlan0/device").mkdir(parents=True)
 
     assert select_network_interface(net, route) == "wlan0"
+
+
+def test_physical_cellular_interface_is_supported(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import select_network_interface
+
+    net = tmp_path / "net"
+    route = tmp_path / "route"
+    route.write_text(
+        "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n"
+        "wwan0 00000000 00000000 0003 0 0 0 00000000 0 0 0\n"
+    )
+    (net / "wwan0/device").mkdir(parents=True)
+    for counter in ("rx_bytes", "tx_bytes"):
+        path = net / "wwan0/statistics" / counter
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("100")
+
+    assert select_network_interface(net, route) == "wwan0"
+    assert select_network_interface(net, route, "wwan0") == "wwan0"

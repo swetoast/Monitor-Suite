@@ -18,7 +18,7 @@ import subprocess
 import time
 from typing import Any, Callable, Literal, Mapping
 
-from .config import Settings
+from .config import EXCLUDED_NETWORK_INTERFACE_PREFIXES, Settings
 from .power import PowerProfile, estimate_power_w, select_profile
 
 _LOGGER = logging.getLogger(__name__)
@@ -120,6 +120,10 @@ def run_smartctl(arguments: list[str], timeout: float) -> str | None:
     return output or None
 
 
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
 def _smart_device_in_standby(text: str | None) -> bool:
     if not text:
         return False
@@ -127,8 +131,14 @@ def _smart_device_in_standby(text: str | None) -> bool:
         data = json.loads(text)
     except (json.JSONDecodeError, TypeError):
         return False
-    messages = data.get("smartctl", {}).get("messages", [])
-    return any("standby" in str(item.get("string", "")).lower() for item in messages)
+    smartctl = _as_mapping(_as_mapping(data).get("smartctl"))
+    messages = smartctl.get("messages", [])
+    if not isinstance(messages, list):
+        return False
+    return any(
+        "standby" in str(_as_mapping(item).get("string", "")).lower()
+        for item in messages
+    )
 
 
 def read_model(path: Path) -> str:
@@ -422,31 +432,7 @@ def _network_interface_has_counters(path: Path) -> bool:
 
 
 def _network_interface_is_excluded(name: str) -> bool:
-    return name == "lo" or name.startswith(
-        (
-            "docker",
-            "br-",
-            "veth",
-            "virbr",
-            "tun",
-            "tap",
-            "wg",
-            "tailscale",
-            "zt",
-            "wwan",
-            "ifb",
-            "dummy",
-            "vnet",
-            "vmnet",
-            "sit",
-            "ip6tnl",
-            "gre",
-            "gretap",
-            "erspan",
-            "vxlan",
-            "geneve",
-        )
-    )
+    return name == "lo" or name.startswith(EXCLUDED_NETWORK_INTERFACE_PREFIXES)
 
 
 def _network_interface_is_aggregate_or_vlan(name: str) -> bool:
@@ -651,12 +637,22 @@ def _read_int(path: Path) -> int | None:
         return None
 
 
-def _raid_redundancy(level: str, status: str, failed_members: int | None) -> str:
+def _raid_redundancy(
+    level: str,
+    status: str,
+    failed_members: int | None,
+    active_members: int,
+    expected_members: int | None,
+) -> str:
     if level in {"raid0", "linear"}:
         return "none"
     if status == "failed":
         return "lost"
-    if failed_members:
+    if (
+        status == "degraded"
+        or bool(failed_members)
+        or (expected_members is not None and active_members < expected_members)
+    ):
         return "reduced"
     if level in {"raid1", "raid4", "raid5", "raid6", "raid10"}:
         return "available"
@@ -712,7 +708,7 @@ def read_raid_arrays(block_root: Path) -> list[dict[str, Any]]:
             "active_members": active,
             "expected_members": expected,
             "failed_members": failed,
-            "redundancy": _raid_redundancy(level, state, failed),
+            "redundancy": _raid_redundancy(level, state, failed, active, expected),
         }
         completed = _read_text(md / "sync_completed")
         if state in {"recovering", "resyncing", "checking", "reshaping"} and completed and "/" in completed:
@@ -727,11 +723,14 @@ def read_raid_arrays(block_root: Path) -> list[dict[str, Any]]:
 
 
 def _smart_attributes(data: Mapping[str, Any]) -> dict[int, int]:
-    table = data.get("ata_smart_attributes", {}).get("table", [])
+    attributes = _as_mapping(data.get("ata_smart_attributes"))
+    table = attributes.get("table", [])
     values: dict[int, int] = {}
     for item in table if isinstance(table, list) else []:
+        entry = _as_mapping(item)
+        raw = _as_mapping(entry.get("raw"))
         try:
-            values[int(item["id"])] = int(item.get("raw", {}).get("value", 0))
+            values[int(entry["id"])] = int(raw.get("value", 0))
         except (KeyError, TypeError, ValueError):
             continue
     return values
@@ -742,23 +741,43 @@ def parse_smart_json(text: str | None, device: str) -> dict[str, Any] | None:
     if not text:
         return None
     try:
-        data = json.loads(text)
+        loaded = json.loads(text)
     except (json.JSONDecodeError, TypeError):
         return None
-    if not data.get("smart_support", {}).get("available", False):
+    data = _as_mapping(loaded)
+    if not data:
         return None
-    passed = data.get("smart_status", {}).get("passed")
-    ata_test = data.get("ata_smart_data", {}).get("self_test", {}).get("status", {})
+
+    smart_support = _as_mapping(data.get("smart_support"))
+    if not smart_support.get("available", False):
+        return None
+    smart_status = _as_mapping(data.get("smart_status"))
+    passed = smart_status.get("passed")
+
+    ata_data = _as_mapping(data.get("ata_smart_data"))
+    self_test = _as_mapping(ata_data.get("self_test"))
+    ata_test = _as_mapping(self_test.get("status"))
     ata_test_text = str(ata_test.get("string", "")).lower()
-    nvme_test = data.get("nvme_self_test_log", {}).get("current_self_test_operation", {}).get("value")
+
+    nvme_self_test = _as_mapping(data.get("nvme_self_test_log"))
+    nvme_operation = _as_mapping(nvme_self_test.get("current_self_test_operation"))
+    nvme_test = nvme_operation.get("value")
     testing = "in progress" in ata_test_text or nvme_test not in {None, 0}
+
     attrs = _smart_attributes(data)
-    nvme = data.get("nvme_smart_health_information_log", {})
-    critical = int(nvme.get("critical_warning", 0) or 0)
-    media_errors = int(nvme.get("media_errors", 0) or 0)
+    nvme = _as_mapping(data.get("nvme_smart_health_information_log"))
+    try:
+        critical = int(nvme.get("critical_warning", 0) or 0)
+        media_errors = int(nvme.get("media_errors", 0) or 0)
+    except (TypeError, ValueError):
+        critical = 0
+        media_errors = 0
+
+    attributes = _as_mapping(data.get("ata_smart_attributes"))
+    table = attributes.get("table", [])
     failed_attribute = any(
-        bool(item.get("when_failed"))
-        for item in data.get("ata_smart_attributes", {}).get("table", [])
+        bool(_as_mapping(item).get("when_failed"))
+        for item in table if isinstance(table, list)
     )
     ata_warning = any(attrs.get(identifier, 0) > 0 for identifier in (5, 197, 198))
     if passed is False or failed_attribute or critical:
@@ -769,14 +788,18 @@ def parse_smart_json(text: str | None, device: str) -> dict[str, Any] | None:
         status = "warning"
     else:
         status = "healthy"
+
+    temperature = _as_mapping(data.get("temperature"))
     result: dict[str, Any] = {
         "device": device,
         "status": status,
-        "temperature_c": data.get("temperature", {}).get("current"),
+        "temperature_c": temperature.get("current"),
     }
     used = nvme.get("percentage_used")
     if isinstance(used, (int, float)):
-        result["remaining_life_percent"] = max(0, min(100, round(100 - float(used), 1)))
+        result["remaining_life_percent"] = max(
+            0, min(100, round(100 - float(used), 1))
+        )
     return result
 
 

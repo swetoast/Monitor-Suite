@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import ipaddress
+import math
 import os
 from pathlib import Path
 import re
@@ -17,8 +18,8 @@ def _positive_float(name: str, default: float) -> float:
         value = float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number") from exc
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than zero")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite number greater than zero")
     return value
 
 
@@ -41,8 +42,8 @@ def _optional_positive_float(name: str) -> float | None:
         value = float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number") from exc
-    if value <= 0:
-        raise ValueError(f"{name} must be greater than zero")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite number greater than zero")
     return value
 
 
@@ -103,13 +104,37 @@ def _trusted_proxies(name: str) -> str | None:
         raise ValueError(f"{name} must contain explicit trusted IP addresses or networks")
     for value in values:
         try:
-            ipaddress.ip_network(value, strict=False)
+            network = ipaddress.ip_network(value, strict=False)
         except ValueError as exc:
             raise ValueError(f"{name} contains an invalid IP address or network") from exc
+        if network.prefixlen == 0:
+            raise ValueError(f"{name} must not trust every IP address")
     return ",".join(values)
 
 
 _INTERFACE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,15}$")
+EXCLUDED_NETWORK_INTERFACE_PREFIXES = (
+    "docker",
+    "br-",
+    "veth",
+    "virbr",
+    "tun",
+    "tap",
+    "wg",
+    "tailscale",
+    "zt",
+    "ifb",
+    "dummy",
+    "vnet",
+    "vmnet",
+    "sit",
+    "ip6tnl",
+    "gre",
+    "gretap",
+    "erspan",
+    "vxlan",
+    "geneve",
+)
 
 
 def _optional_interface(name: str) -> str | None:
@@ -117,8 +142,14 @@ def _optional_interface(name: str) -> str | None:
     if raw is None or not raw.strip():
         return None
     value = raw.strip()
-    if not _INTERFACE_RE.fullmatch(value) or value == "lo" or value.startswith(("docker", "br-", "veth")):
-        raise ValueError(f"{name} must name a physical network interface")
+    if (
+        not _INTERFACE_RE.fullmatch(value)
+        or value == "lo"
+        or value.startswith(EXCLUDED_NETWORK_INTERFACE_PREFIXES)
+    ):
+        raise ValueError(
+            f"{name} must name a physical network interface, bond, team, VLAN, or cellular interface"
+        )
     return value
 
 

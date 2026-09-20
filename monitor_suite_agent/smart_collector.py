@@ -23,10 +23,12 @@ def configured_cache() -> Path:
 def _previous_devices(path: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-        devices = data.get("devices", [])
-        return devices if isinstance(devices, list) else []
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return []
+    if not isinstance(data, dict):
+        return []
+    devices = data.get("devices", [])
+    return devices if isinstance(devices, list) else []
 
 
 def write_cache(path: Path, devices: list[dict[str, Any]]) -> None:
