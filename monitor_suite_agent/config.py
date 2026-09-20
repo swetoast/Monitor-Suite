@@ -81,6 +81,12 @@ def _is_loopback_host(host: str) -> bool:
 def _api_key(host: str) -> str | None:
     raw = os.getenv("MONITOR_SUITE_API_KEY")
     value = raw.strip() if raw else None
+    if value is not None and (
+        not value.isascii()
+        or not value.isprintable()
+        or any(character.isspace() for character in value)
+    ):
+        raise ValueError("MONITOR_SUITE_API_KEY must use printable ASCII without internal whitespace")
     if value is not None and len(value) < 32:
         raise ValueError("MONITOR_SUITE_API_KEY must be at least 32 characters")
     if not _is_loopback_host(host) and value is None:

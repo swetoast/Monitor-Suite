@@ -24,7 +24,7 @@ def test_bad_smart_device_does_not_discard_valid_devices() -> None:
         {"device": "nvme0n1", "status": "healthy", "temperature_c": 28.0, "remaining_life_percent": 99.0},
     ])
     assert devices is not None
-    assert [item["device"] for item in devices] == ["sda", "nvme0n1"]
+    assert [item["device"] for item in devices] == ["sda", "mmcblk0", "nvme0n1"]
 
 
 def test_fan_only_cooling_reports_rpm(tmp_path: Path) -> None:

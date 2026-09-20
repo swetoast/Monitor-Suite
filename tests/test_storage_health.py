@@ -301,9 +301,13 @@ def test_invalid_smart_values_and_duplicate_devices_are_rejected(tmp_path: Path)
     _write_smart_cache(cache, now, [
         {"device": "sda", "status": "healthy", "temperature_c": float("nan")}
     ])
-    assert read_smart_cache(cache, 1800.0, now, previous)[0][0]["status"] == "unavailable"
+    cleaned, current = read_smart_cache(cache, 1800.0, now, previous)
+    assert current is True
+    assert cleaned == [{"device": "sda", "status": "healthy", "temperature_c": None}]
     _write_smart_cache(cache, now, previous + previous)
-    assert read_smart_cache(cache, 1800.0, now, previous)[1] is False
+    cleaned, current = read_smart_cache(cache, 1800.0, now, previous)
+    assert current is True
+    assert cleaned == [{"device": "sda", "status": "healthy", "temperature_c": 29.0}]
 
 
 def test_nvme_hwmon_temperature_maps_to_namespace_and_overrides_smart(tmp_path: Path) -> None:
@@ -327,4 +331,51 @@ def test_nvme_hwmon_temperature_maps_to_namespace_and_overrides_smart(tmp_path: 
 def test_nvme_hwmon_temperature_survives_unavailable_smart() -> None:
     assert merge_nvme_temperatures([], {"nvme1n1": 31.85}) == [
         {"device": "nvme1n1", "status": "unavailable", "temperature_c": 31.85}
+    ]
+
+
+def test_bad_smart_temperature_does_not_blank_other_devices(tmp_path: Path) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    cache = tmp_path / "smart.json"
+    devices = [
+        {"device": "sda", "status": "healthy", "temperature_c": 38},
+        {"device": "sdb", "status": "failed", "temperature_c": 200},
+        {"device": "nvme0n1", "status": "healthy", "temperature_c": 45},
+    ]
+    _write_smart_cache(cache, now, devices)
+
+    cleaned, current = read_smart_cache(cache, 1800.0, now)
+
+    assert current is True
+    assert cleaned == [
+        {"device": "sda", "status": "healthy", "temperature_c": 38.0},
+        {"device": "sdb", "status": "failed", "temperature_c": None},
+        {"device": "nvme0n1", "status": "healthy", "temperature_c": 45.0},
+    ]
+
+
+def test_smart_entry_schema_drift_is_isolated_and_new_device_names_are_supported(
+    tmp_path: Path,
+) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    cache = tmp_path / "smart.json"
+    devices = [
+        {
+            "device": "vda",
+            "status": "healthy",
+            "temperature_c": 30,
+            "power_on_hours": 123,
+        },
+        {"device": "mmcblk0", "status": "warning", "temperature_c": 42},
+        {"device": "vda", "status": "failed", "temperature_c": 99},
+        {"device": "sdb", "status": "future_status", "temperature_c": 40},
+    ]
+    _write_smart_cache(cache, now, devices)
+
+    cleaned, current = read_smart_cache(cache, 1800.0, now)
+
+    assert current is True
+    assert cleaned == [
+        {"device": "vda", "status": "healthy", "temperature_c": 30.0},
+        {"device": "mmcblk0", "status": "warning", "temperature_c": 42.0},
     ]

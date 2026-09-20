@@ -343,7 +343,7 @@ Add regression coverage driven by the fixtures in 8.1:
 - Privacy scrub holds: no hostnames, addresses, serials, UUIDs, WWNs, or device paths in any amd64-derived field.
 - The approved sensor and entity list in sections 1 through 3 is unchanged, and `/status` and `/health` still validate under `extra="forbid"` with the added attributes present in the typed models.
 
-Implementation acceptance now includes direct fixture-driven regression tests for exact x86 counts, package-temperature selection, desktop multi-fan cooling, privacy scrubbing, RAPL calculation and cache validation, API-model strictness, amd64 health behavior, and the unchanged Raspberry Pi regression suite.
+Implementation acceptance now includes direct fixture-driven regression tests for exact x86 counts, package-temperature selection including unlabeled AMD `k10temp`, desktop multi-fan cooling, bonded, teamed, and VLAN network selection with VPN and virtual-tunnel exclusion, privacy scrubbing, isolated SMART-entry validation, RAPL calculation and cache validation, API-model strictness, amd64 health behavior, scheduled rediscovery, and the unchanged Raspberry Pi regression suite.
 
 The remaining acceptance work is deployment validation on physical amd64 hardware. Software tests alone do not prove service permissions, kernel driver availability, sysfs visibility, or systemd behavior on a target machine.
 

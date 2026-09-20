@@ -81,6 +81,10 @@ def test_physical_interface_preferred_and_virtual_interfaces_filtered(tmp_path: 
     net = tmp_path / "net"
     for name in ("eth0", "docker0", "br-92b62be64466", "veth8d09df9", "lo"):
         (net / name).mkdir(parents=True)
+    for counter in ("rx_bytes", "tx_bytes"):
+        path = net / "eth0/statistics" / counter
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("100")
     route = tmp_path / "route"
     route.write_text("Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\neth0 00000000 0100000A 0003 0 0 100 00000000 0 0 0\n")
     assert select_network_interface(net, route) == "eth0"

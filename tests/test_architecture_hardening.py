@@ -274,3 +274,186 @@ def test_stale_existing_amd64_power_cache_is_probe_failure(tmp_path: Path) -> No
     sampler._collect_sync()
 
     assert sampler._probe_health["power"].available is False
+
+
+def test_malformed_pmic_number_is_ignored() -> None:
+    from monitor_suite_agent.telemetry import parse_pmic
+
+    assert parse_pmic("EXT5V_V volt(0)=5..1V\nEXT5V_A current(0)=1.0A") == {
+        "EXT5V": {"voltage_v": None, "current_a": 1.0, "power_w": None}
+    }
+
+
+def test_bond_interface_can_be_selected_explicitly_or_from_default_route(
+    tmp_path: Path,
+) -> None:
+    from monitor_suite_agent.telemetry import select_network_interface
+
+    net = tmp_path / "net"
+    route = tmp_path / "route"
+    for counter in ("rx_bytes", "tx_bytes"):
+        path = net / "bond0/statistics" / counter
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("100")
+    route.write_text(
+        "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n"
+        "bond0 00000000 00000000 0003 0 0 0 00000000 0 0 0\n"
+    )
+
+    assert select_network_interface(net, route) == "bond0"
+    assert select_network_interface(net, route, "bond0") == "bond0"
+
+
+def test_unlabelled_k10temp_uses_temp1_fallback(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import read_cpu_temperature_c
+
+    hwmon = tmp_path / "hwmon"
+    monitor = hwmon / "hwmon0"
+    monitor.mkdir(parents=True)
+    (monitor / "name").write_text("k10temp")
+    (monitor / "temp1_input").write_text("48750")
+
+    assert read_cpu_temperature_c(tmp_path / "thermal", hwmon) == 48.8
+
+
+def test_missing_source_discovery_uses_slow_backoff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from monitor_suite_agent import telemetry
+
+    calls = {"network": 0, "root": 0}
+
+    def network(*args: object) -> None:
+        calls["network"] += 1
+        return None
+
+    def root(*args: object) -> None:
+        calls["root"] += 1
+        return None
+
+    monkeypatch.setattr(telemetry, "select_network_interface", network)
+    monkeypatch.setattr(telemetry, "resolve_root_device", root)
+    sampler = TelemetrySampler(
+        Settings(slow_sample_interval_seconds=30.0),
+        paths=Paths(root=tmp_path),
+        machine=lambda: "amd64",
+        monotonic=lambda: 10.0,
+    )
+    calls.update(network=0, root=0)
+
+    sampler._collect_sync()
+    sampler._collect_sync()
+
+    assert calls == {"network": 1, "root": 1}
+
+
+def test_smart_cache_read_uses_slow_schedule(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from monitor_suite_agent import telemetry
+
+    calls = 0
+
+    def read_cache(*args: object) -> tuple[list[dict[str, object]], bool]:
+        nonlocal calls
+        calls += 1
+        return [], True
+
+    monkeypatch.setattr(telemetry, "read_smart_cache", read_cache)
+    sampler = TelemetrySampler(
+        Settings(slow_sample_interval_seconds=30.0),
+        paths=Paths(root=tmp_path),
+        machine=lambda: "amd64",
+        monotonic=lambda: 10.0,
+    )
+
+    sampler._collect_sync()
+    sampler._collect_sync()
+
+    assert calls == 1
+
+
+def test_network_auto_selection_excludes_tunnels_and_virtual_bridges(
+    tmp_path: Path,
+) -> None:
+    from monitor_suite_agent.telemetry import select_network_interface
+
+    net = tmp_path / "net"
+    route = tmp_path / "route"
+    route.write_text("Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n")
+    for name in ("wg0", "tailscale0", "virbr0", "tun0", "tap0", "ztabc", "wlan0"):
+        for counter in ("rx_bytes", "tx_bytes"):
+            path = net / name / "statistics" / counter
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("100")
+    (net / "wlan0/device").mkdir(parents=True)
+
+    assert select_network_interface(net, route) == "wlan0"
+
+
+def test_vpn_default_route_falls_back_to_underlying_physical_interface(
+    tmp_path: Path,
+) -> None:
+    from monitor_suite_agent.telemetry import select_network_interface
+
+    net = tmp_path / "net"
+    route = tmp_path / "route"
+    route.write_text(
+        "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n"
+        "wg0 00000000 00000000 0003 0 0 0 00000000 0 0 0\n"
+    )
+    for name in ("wg0", "eth0"):
+        for counter in ("rx_bytes", "tx_bytes"):
+            path = net / name / "statistics" / counter
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("100")
+    (net / "eth0/device").mkdir(parents=True)
+
+    assert select_network_interface(net, route) == "eth0"
+
+
+def test_explicit_tunnel_interface_is_rejected(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import select_network_interface
+
+    net = tmp_path / "net"
+    route = tmp_path / "route"
+    for counter in ("rx_bytes", "tx_bytes"):
+        path = net / "wg0/statistics" / counter
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("100")
+
+    assert select_network_interface(net, route, "wg0") is None
+
+
+def test_default_route_vlan_is_supported(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import select_network_interface
+
+    net = tmp_path / "net"
+    route = tmp_path / "route"
+    route.write_text(
+        "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n"
+        "eth0.20 00000000 00000000 0003 0 0 0 00000000 0 0 0\n"
+    )
+    for counter in ("rx_bytes", "tx_bytes"):
+        path = net / "eth0.20/statistics" / counter
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("100")
+
+    assert select_network_interface(net, route) == "eth0.20"
+    assert select_network_interface(net, route, "eth0.20") == "eth0.20"
+
+
+def test_additional_virtual_interface_prefixes_are_excluded(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import select_network_interface
+
+    net = tmp_path / "net"
+    route = tmp_path / "route"
+    route.write_text("Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\n")
+    for name in ("wwan0", "dummy0", "vnet0", "vxlan0", "wlan0"):
+        for counter in ("rx_bytes", "tx_bytes"):
+            path = net / name / "statistics" / counter
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("100")
+    (net / "wlan0/device").mkdir(parents=True)
+
+    assert select_network_interface(net, route) == "wlan0"

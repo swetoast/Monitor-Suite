@@ -43,3 +43,21 @@ def test_probe_intervals_reject_zero(monkeypatch: pytest.MonkeyPatch, name: str)
     monkeypatch.setenv(name, "0")
     with pytest.raises(ValueError, match="greater than zero"):
         Settings.from_env()
+
+
+def test_non_ascii_or_whitespace_api_key_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MONITOR_SUITE_HOST", "0.0.0.0")
+    for value in ("a" * 31 + "å", "a" * 16 + " " + "a" * 16, "a" * 16 + "\t" + "a" * 16):
+        monkeypatch.setenv("MONITOR_SUITE_API_KEY", value)
+        with pytest.raises(ValueError, match="printable ASCII"):
+            Settings.from_env()
+
+
+def test_api_key_surrounding_whitespace_is_trimmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MONITOR_SUITE_HOST", "0.0.0.0")
+    monkeypatch.setenv("MONITOR_SUITE_API_KEY", "  " + "a" * 32 + "\n")
+    assert Settings.from_env().api_key == "a" * 32

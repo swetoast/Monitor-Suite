@@ -247,6 +247,10 @@ def read_cpu_temperature_c(thermal_root: Path, hwmon_root: Path) -> float | None
                     value = _plausible_cpu_temperature(_read_text(input_path))
                     if value is not None:
                         return value
+        if name == "k10temp" and not labelled:
+            value = _plausible_cpu_temperature(_read_text(monitor / "temp1_input"))
+            if value is not None:
+                return value
     return None
 
 
@@ -351,9 +355,13 @@ def parse_pmic(text: str | None) -> dict[str, dict[str, float | None]]:
         suffix = "_A" if kind == "current" else "_V"
         if not label.endswith(suffix):
             continue
+        try:
+            numeric_value = float(raw_value)
+        except ValueError:
+            continue
         rail = label[: -len(suffix)]
         entry = rails.setdefault(rail, {"voltage_v": None, "current_a": None, "power_w": None})
-        entry["current_a" if kind == "current" else "voltage_v"] = float(raw_value)
+        entry["current_a" if kind == "current" else "voltage_v"] = numeric_value
     for entry in rails.values():
         voltage = entry["voltage_v"]
         current = entry["current_a"]
@@ -408,11 +416,55 @@ def build_health(flags: Mapping[str, bool | int] | None) -> dict[str, str]:
     }
 
 
+def _network_interface_has_counters(path: Path) -> bool:
+    stats = path / "statistics"
+    return (stats / "rx_bytes").is_file() and (stats / "tx_bytes").is_file()
+
+
+def _network_interface_is_excluded(name: str) -> bool:
+    return name == "lo" or name.startswith(
+        (
+            "docker",
+            "br-",
+            "veth",
+            "virbr",
+            "tun",
+            "tap",
+            "wg",
+            "tailscale",
+            "zt",
+            "wwan",
+            "ifb",
+            "dummy",
+            "vnet",
+            "vmnet",
+            "sit",
+            "ip6tnl",
+            "gre",
+            "gretap",
+            "erspan",
+            "vxlan",
+            "geneve",
+        )
+    )
+
+
+def _network_interface_is_aggregate_or_vlan(name: str) -> bool:
+    return name.startswith(("bond", "team", "vlan")) or "." in name
+
+
 def select_network_interface(net_root: Path, route_path: Path, preferred: str | None = None) -> str | None:
-    """Select the default-route physical interface and ignore virtual links."""
+    """Select a physical, aggregate, or VLAN interface while excluding tunnels."""
     if preferred is not None:
         path = net_root / preferred
-        if path.exists() and (path / "device").exists():
+        if _network_interface_is_excluded(preferred) or not path.exists():
+            return None
+        if (path / "device").exists():
+            return preferred
+        if (
+            _network_interface_is_aggregate_or_vlan(preferred)
+            and _network_interface_has_counters(path)
+        ):
             return preferred
         return None
 
@@ -428,19 +480,28 @@ def select_network_interface(net_root: Path, route_path: Path, preferred: str | 
                         break
                 except ValueError:
                     pass
-    candidates = [default] if default else []
+
+    candidates: list[str] = []
+    if default and not _network_interface_is_excluded(default):
+        candidates.append(default)
     if net_root.exists():
         candidates.extend(
-            path.name for path in sorted(net_root.iterdir()) if path.name != default
+            path.name
+            for path in sorted(net_root.iterdir())
+            if path.name != default and not _network_interface_is_excluded(path.name)
         )
     for name in candidates:
-        if not name or name == "lo" or name.startswith(("docker", "br-", "veth")):
-            continue
         path = net_root / name
         if not path.exists():
             continue
-        device = path / "device"
-        if device.exists() or name.startswith(("eth", "en", "wlan", "wl")):
+        if (path / "device").exists():
+            return name
+        if name == default and _network_interface_has_counters(path):
+            return name
+        if (
+            _network_interface_is_aggregate_or_vlan(name)
+            and _network_interface_has_counters(path)
+        ):
             return name
     return None
 
@@ -816,36 +877,25 @@ def _valid_number(value: Any, minimum: float, maximum: float) -> float | None:
 
 
 def _clean_smart_devices(value: Any) -> list[dict[str, Any]] | None:
-    """Validate cache entries while isolating unsupported device names."""
+    """Validate SMART entries while isolating malformed per-device data."""
     if not isinstance(value, list):
         return None
-    allowed = {"device", "status", "temperature_c", "remaining_life_percent"}
     statuses = {"healthy", "warning", "failed", "testing", "unavailable"}
     clean: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in value:
-        if not isinstance(item, dict) or set(item) - allowed:
-            return None
+        if not isinstance(item, dict):
+            continue
         device = item.get("device")
         status = item.get("status")
         if not isinstance(device, str):
-            return None
-        if not re.fullmatch(r"(?:sd[a-z]+|nvme\d+n\d+)", device):
+            continue
+        if not re.fullmatch(r"(?:sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+|mmcblk\d+)", device):
             continue
         if device in seen or status not in statuses:
-            return None
-        temperature_raw = item.get("temperature_c")
-        temperature = None
-        if temperature_raw is not None:
-            temperature = _valid_number(temperature_raw, -40.0, 150.0)
-            if temperature is None:
-                return None
-        life_raw = item.get("remaining_life_percent")
-        life = None
-        if life_raw is not None:
-            life = _valid_number(life_raw, 0.0, 100.0)
-            if life is None:
-                return None
+            continue
+        temperature = _valid_number(item.get("temperature_c"), -40.0, 150.0)
+        life = _valid_number(item.get("remaining_life_percent"), 0.0, 100.0)
         entry: dict[str, Any] = {
             "device": device,
             "status": status,
@@ -1058,6 +1108,8 @@ class TelemetrySampler:
         self._power_schedule = ProbeSchedule()
         self._resource_schedule = ProbeSchedule()
         self._nvme_temperature_schedule = ProbeSchedule()
+        self._smart_cache_schedule = ProbeSchedule()
+        self._selection_schedule = ProbeSchedule()
         self._raid_schedule = ProbeSchedule()
         self._probe_health = {
             name: ProbeHealth()
@@ -1225,23 +1277,33 @@ class TelemetrySampler:
 
     def _collect_sync(self) -> dict[str, Any]:
         mono = self._monotonic()
-        if self.interface is None or not (self.paths.net_root / self.interface).exists():
-            previous_interface = self.interface
-            selected_interface = select_network_interface(
-                self.paths.net_root, self.paths.proc_net_route, self.settings.network_interface
-            )
-            self.interface = selected_interface
-            self._log_selection_transition(
-                "Network interface", previous_interface, selected_interface
-            )
-        if self.root_device is None or not (self.paths.block_root / self.root_device).exists():
-            previous_root = self.root_device
-            selected_root = resolve_root_device(
-                _read_text(self.paths.proc_mountinfo), self.paths.block_root
-            )
-            self.root_device = selected_root
-            self._log_selection_transition(
-                "Root backing device", previous_root, selected_root
+        selection_needed = (
+            self.interface is None
+            or not (self.paths.net_root / self.interface).exists()
+            or self.root_device is None
+            or not (self.paths.block_root / self.root_device).exists()
+        )
+        if selection_needed and self._selection_schedule.due(mono):
+            if self.interface is None or not (self.paths.net_root / self.interface).exists():
+                previous_interface = self.interface
+                selected_interface = select_network_interface(
+                    self.paths.net_root, self.paths.proc_net_route, self.settings.network_interface
+                )
+                self.interface = selected_interface
+                self._log_selection_transition(
+                    "Network interface", previous_interface, selected_interface
+                )
+            if self.root_device is None or not (self.paths.block_root / self.root_device).exists():
+                previous_root = self.root_device
+                selected_root = resolve_root_device(
+                    _read_text(self.paths.proc_mountinfo), self.paths.block_root
+                )
+                self.root_device = selected_root
+                self._log_selection_transition(
+                    "Root backing device", previous_root, selected_root
+                )
+            self._selection_schedule.schedule(
+                mono, self.settings.slow_sample_interval_seconds
             )
         cooling_missing = (
             (self.cooling_path is None and self.fan_path is None)
@@ -1372,16 +1434,20 @@ class TelemetrySampler:
                 mono, self.settings.slow_sample_interval_seconds
             )
 
-        cached_smart, smart_cache_current = read_smart_cache(
-            self.settings.smart_cache_file,
-            self.settings.smart_cache_max_age_seconds,
-            self._now(),
-            self._smart_values,
-        )
-        self._smart_values = merge_nvme_temperatures(
-            cached_smart, self._nvme_temperatures
-        )
-        self._record_probe("smart", smart_cache_current, mono)
+        if self._smart_cache_schedule.due(mono):
+            cached_smart, smart_cache_current = read_smart_cache(
+                self.settings.smart_cache_file,
+                self.settings.smart_cache_max_age_seconds,
+                self._now(),
+                self._smart_values,
+            )
+            self._smart_values = merge_nvme_temperatures(
+                cached_smart, self._nvme_temperatures
+            )
+            self._record_probe("smart", smart_cache_current, mono)
+            self._smart_cache_schedule.schedule(
+                mono, self.settings.slow_sample_interval_seconds
+            )
 
         if self._raid_schedule.due(mono):
             self._raid_values = read_raid_arrays(self.paths.block_root)

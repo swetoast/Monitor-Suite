@@ -14,6 +14,14 @@
 - Distinguished an unsupported missing amd64 power cache from a stale or invalid existing cache in probe health.
 - Prevented unavailable optional frequency, network, or root-disk counters from permanently degrading daemon health when CPU counters remain available.
 - Simplified sampler shutdown and removed redundant probe-health conditions and unused values.
+- Isolated malformed SMART fields and entries so one bad device cannot blank valid SMART status, and added virtio and eMMC device-name support.
+- Guarded malformed Raspberry Pi PMIC numeric values so they cannot abort a collection cycle.
+- Added bonded, teamed, and VLAN/default-route interface selection with slow rediscovery backoff.
+- Added an unlabeled `k10temp` `temp1_input` fallback for AMD package temperature.
+- Rejected non-ASCII and whitespace-containing API keys during configuration loading.
+- Moved SMART cache parsing from every fast tick to the slow telemetry schedule.
+- Prevented automatic network selection from choosing VPN tunnels and virtual bridges, including WireGuard, TUN/TAP, Tailscale, ZeroTier, and libvirt interfaces.
+- Kept surrounding API-key whitespace trimming while continuing to reject non-ASCII and internal whitespace.
 
 ## 2.8.1
 
