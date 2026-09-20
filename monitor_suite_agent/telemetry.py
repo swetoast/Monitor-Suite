@@ -426,6 +426,96 @@ def build_health(flags: Mapping[str, bool | int] | None) -> dict[str, str]:
     }
 
 
+def read_amd64_health(
+    hwmon_root: Path,
+    cpu_root: Path,
+    previous_throttle_counts: Mapping[str, int] | None,
+) -> tuple[dict[str, str], dict[str, int]]:
+    """Build x86 health from CPU thermal alarms, limits, and throttle counters."""
+    thermal_state = "unavailable"
+    thermal_supported = False
+    thermal_limited = False
+    thermal_critical = False
+
+    if hwmon_root.exists():
+        for hwmon in sorted(hwmon_root.glob("hwmon*"), key=lambda item: item.name):
+            source = (_read_text(hwmon / "name") or "").strip().lower()
+            if source not in {"coretemp", "k10temp"}:
+                continue
+            for input_path in sorted(hwmon.glob("temp[0-9]*_input")):
+                match = re.fullmatch(r"temp(\d+)_input", input_path.name)
+                if match is None:
+                    continue
+                prefix = f"temp{match.group(1)}"
+                current = _read_int(input_path)
+                critical = _read_int(hwmon / f"{prefix}_crit")
+                maximum = _read_int(hwmon / f"{prefix}_max")
+                alarm = _read_int(hwmon / f"{prefix}_crit_alarm")
+                if alarm is not None or (current is not None and critical is not None):
+                    thermal_supported = True
+                if alarm is not None and alarm > 0:
+                    thermal_critical = True
+                if current is not None and critical is not None and current >= critical:
+                    thermal_critical = True
+                if current is not None and maximum is not None:
+                    thermal_supported = True
+                    if current >= maximum:
+                        thermal_limited = True
+
+    if thermal_supported:
+        thermal_state = (
+            "critical" if thermal_critical else "limited" if thermal_limited else "normal"
+        )
+
+    counts: dict[str, int] = {}
+    for path in sorted(cpu_root.glob("cpu[0-9]*/thermal_throttle/*_throttle_count")):
+        value = _read_int(path)
+        if value is not None and value >= 0:
+            counts[str(path.relative_to(cpu_root))] = value
+    performance_supported = bool(counts)
+    performance_capped = bool(
+        previous_throttle_counts
+        and any(
+            value > previous_throttle_counts.get(name, value)
+            for name, value in counts.items()
+        )
+    )
+    performance_state = (
+        "frequency_capped"
+        if performance_capped
+        else "normal"
+        if performance_supported
+        else "unavailable"
+    )
+
+    if not thermal_supported and not performance_supported:
+        return (
+            {
+                "status": "unavailable",
+                "power_supply": "unavailable",
+                "thermal_state": "unavailable",
+                "performance_state": "unavailable",
+            },
+            counts,
+        )
+    status = (
+        "critical"
+        if thermal_state == "critical"
+        else "warning"
+        if thermal_state == "limited" or performance_capped
+        else "ok"
+    )
+    return (
+        {
+            "status": status,
+            "power_supply": "not_supported",
+            "thermal_state": thermal_state,
+            "performance_state": performance_state,
+        },
+        counts,
+    )
+
+
 def _network_interface_has_counters(path: Path) -> bool:
     stats = path / "statistics"
     return (stats / "rx_bytes").is_file() and (stats / "tx_bytes").is_file()
@@ -1122,6 +1212,7 @@ class TelemetrySampler:
         self._cpu_samples: deque[float] = deque(maxlen=10)
         self._previous_network: RateCounter | None = None
         self._previous_disk: RateCounter | None = None
+        self._previous_throttle_counts: dict[str, int] | None = None
         self._slow_values: dict[str, Any] = {}
         self._hardware_values: dict[str, Any] = {}
         self._raid_values: list[dict[str, Any]] = []
@@ -1376,10 +1467,17 @@ class TelemetrySampler:
                 temperature_now = read_cpu_temperature_c(
                     self.paths.thermal_root, self.paths.hwmon_root
                 )
+                health_now, throttle_counts = read_amd64_health(
+                    self.paths.hwmon_root,
+                    self.paths.cpu_root,
+                    self._previous_throttle_counts,
+                )
+                self._previous_throttle_counts = throttle_counts
                 self._hardware_values["temperature_c"] = temperature_now
                 self._hardware_values["cooling"] = read_amd64_cooling(
                     self.paths.hwmon_root
                 )
+                self._hardware_values["health"] = health_now
             self._thermal_schedule.schedule(mono, self.settings.thermal_sample_interval_seconds)
 
         if self._power_schedule.due(mono):
@@ -1516,7 +1614,11 @@ class TelemetrySampler:
                 self._slow_values = resources_now
             self._resource_schedule.schedule(mono, self.settings.slow_sample_interval_seconds)
 
-        health_state = build_health(flags)
+        health_state = (
+            build_health(flags)
+            if self.architecture == "aarch64"
+            else self._hardware_values.get("health", build_health(None))
+        )
         self._log_state_transition("Current undervoltage", health_state["power_supply"])
         self._log_state_transition("Thermal limiting", health_state["thermal_state"])
         self._log_state_transition("Performance limiting", health_state["performance_state"])

@@ -476,3 +476,62 @@ def test_physical_cellular_interface_is_supported(tmp_path: Path) -> None:
 
     assert select_network_interface(net, route) == "wwan0"
     assert select_network_interface(net, route, "wwan0") == "wwan0"
+
+
+def test_amd64_health_uses_thermal_limits_and_throttle_deltas(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import read_amd64_health
+
+    hwmon = tmp_path / "hwmon" / "hwmon0"
+    hwmon.mkdir(parents=True)
+    (hwmon / "name").write_text("coretemp\n")
+    (hwmon / "temp1_input").write_text("85000\n")
+    (hwmon / "temp1_max").write_text("90000\n")
+    (hwmon / "temp1_crit").write_text("100000\n")
+    (hwmon / "temp1_crit_alarm").write_text("0\n")
+    throttle = tmp_path / "cpu" / "cpu0" / "thermal_throttle"
+    throttle.mkdir(parents=True)
+    (throttle / "package_throttle_count").write_text("7\n")
+
+    health, counts = read_amd64_health(tmp_path / "hwmon", tmp_path / "cpu", None)
+    assert health == {
+        "status": "ok",
+        "power_supply": "not_supported",
+        "thermal_state": "normal",
+        "performance_state": "normal",
+    }
+    (throttle / "package_throttle_count").write_text("8\n")
+    health, _ = read_amd64_health(tmp_path / "hwmon", tmp_path / "cpu", counts)
+    assert health["status"] == "warning"
+    assert health["performance_state"] == "frequency_capped"
+
+
+def test_amd64_health_reports_thermal_limit_and_critical_alarm(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import read_amd64_health
+
+    hwmon = tmp_path / "hwmon0"
+    hwmon.mkdir()
+    (hwmon / "name").write_text("k10temp\n")
+    (hwmon / "temp1_input").write_text("91000\n")
+    (hwmon / "temp1_max").write_text("90000\n")
+    (hwmon / "temp1_crit").write_text("100000\n")
+    (hwmon / "temp1_crit_alarm").write_text("0\n")
+    health, _ = read_amd64_health(tmp_path, tmp_path / "cpu", None)
+    assert health["status"] == "warning"
+    assert health["thermal_state"] == "limited"
+    (hwmon / "temp1_crit_alarm").write_text("1\n")
+    health, _ = read_amd64_health(tmp_path, tmp_path / "cpu", None)
+    assert health["status"] == "critical"
+    assert health["thermal_state"] == "critical"
+
+
+def test_amd64_health_is_unavailable_without_supported_signals(tmp_path: Path) -> None:
+    from monitor_suite_agent.telemetry import read_amd64_health
+
+    health, counts = read_amd64_health(tmp_path / "hwmon", tmp_path / "cpu", None)
+    assert counts == {}
+    assert health == {
+        "status": "unavailable",
+        "power_supply": "unavailable",
+        "thermal_state": "unavailable",
+        "performance_state": "unavailable",
+    }
