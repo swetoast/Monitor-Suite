@@ -1,0 +1,116 @@
+MONITOR_SUITE_X86_PROBE_V2
+architecture=x86_64
+kernel=Linux 6.8.0-generic
+os=Ubuntu 22.04 LTS
+data_origin=synthetic_from_verified_x86_evidence
+dmi_vendor=Generic Vendor
+dmi_product=x86 Test System
+board_vendor=Generic Vendor
+board_name=Generic x86 Board
+[programs]
+program name=python3 available=yes version=Python 3.10
+program name=sensors available=yes version=3.6.0
+program name=smartctl available=yes version=7.2
+program name=mdadm available=yes version=4.2
+program name=lsblk available=yes version=2.37
+program name=lscpu available=yes version=2.37
+program name=ip available=yes version=5.15
+program name=ethtool available=yes version=5.16
+program name=nvme available=yes version=1.16
+program name=udevadm available=yes version=249
+program name=systemctl available=yes version=249
+program name=journalctl available=yes version=249
+program name=dmidecode available=yes version=3.3
+program name=findmnt available=yes version=2.37
+[python_runtime]
+python_executable=available
+module name=aiohttp available=yes
+module name=fastapi available=yes
+module name=pydantic available=yes
+module name=psutil available=yes
+module name=uvicorn available=yes
+[cpu]
+vendor_id=GenuineIntel
+model=Intel Core i5-12400
+logical_cpu_count=12
+physical_core_count=6
+scaling_driver=acpi-cpufreq
+scaling_governor=ondemand
+cpuinfo_min_freq_khz=800000
+cpuinfo_max_freq_khz=2501000
+[thermal_zones]
+zone type=acpitz temp_millic=28000
+zone type=x86_pkg_temp temp_millic=30000
+[hwmon]
+device name=acpitz
+temp index=1 label=unavailable input_millic=28000 max_millic=unavailable crit_millic=unavailable
+device name=nvme
+temp index=1 label=Composite input_millic=34000 max_millic=80000 crit_millic=85000
+device name=coretemp
+temp index=1 label=Package id 0 input_millic=30000 max_millic=80000 crit_millic=100000
+temp index=2 label=Core 0 input_millic=27000 max_millic=80000 crit_millic=100000
+temp index=3 label=Core 1 input_millic=27000 max_millic=80000 crit_millic=100000
+temp index=4 label=Core 2 input_millic=28000 max_millic=80000 crit_millic=100000
+temp index=5 label=Core 3 input_millic=28000 max_millic=80000 crit_millic=100000
+temp index=6 label=Core 4 input_millic=29000 max_millic=80000 crit_millic=100000
+temp index=7 label=Core 5 input_millic=27000 max_millic=80000 crit_millic=100000
+device name=nct6798
+fan index=1 label=unavailable rpm=720
+fan index=2 label=unavailable rpm=480
+fan index=3 label=unavailable rpm=1320
+fan index=4 label=unavailable rpm=710
+fan index=5 label=unavailable rpm=0
+fan index=6 label=unavailable rpm=950
+pwm index=1 readable=yes
+pwm index=2 readable=yes
+pwm index=4 readable=yes
+pwm index=5 readable=yes
+pwm index=6 readable=yes
+temp index=1 label=SYSTIN input_millic=33000 max_millic=80000 crit_millic=125000
+temp index=2 label=CPUTIN input_millic=32000 max_millic=80000 crit_millic=125000
+temp index=3 label=AUXTIN0 input_millic=31000 max_millic=80000 crit_millic=100000
+temp index=4 label=AUXTIN1 input_millic=15000 max_millic=80000 crit_millic=125000
+temp index=5 label=AUXTIN2 input_millic=127000 max_millic=80000 crit_millic=125000
+temp index=6 label=PCH_CHIP_TEMP input_millic=0 max_millic=unavailable crit_millic=unavailable
+device name=asus
+fan_input_count=6
+active_fan_count=5
+pwm_input_count=5
+[cooling_devices]
+device type=Fan cur_state=0 max_state=1
+device type=Fan cur_state=0 max_state=1
+device type=Fan cur_state=0 max_state=1
+device type=Fan cur_state=0 max_state=1
+device type=Fan cur_state=0 max_state=1
+fan_cooling_device_count=5
+[powercap]
+zone name=package-0 energy_uj_readable=no
+zone name=core energy_uj_readable=no
+powercap_zone_count=2
+readable_energy_counter_count=0
+[storage]
+disk id=disk1 rotational=0 sectors=1953525168
+disk id=disk2 rotational=1 sectors=3907029168
+physical_disk_count=2
+[raid]
+mdstat_readable=yes
+array_count=1
+mdadm_available=yes
+[smart]
+smartctl_available=yes
+smart_scan_access=yes
+smart_device_count=2
+[network_capabilities]
+interface name=eth0 kind=physical operstate=up speed_mbps=1000 carrier=1 default_route=yes
+interface name=br0 kind=bridge operstate=up speed_mbps=1000 carrier=1 default_route=no
+interface name=veth0 kind=virtual operstate=down speed_mbps=-1 carrier=0 default_route=no
+interface_count=3
+[privacy]
+synthetic_fixture=yes
+hostname_saved=no
+usernames_saved=no
+ip_addresses_saved=no
+mac_addresses_saved=no
+serial_numbers_saved=no
+uuids_saved=no
+mount_paths_saved=no
