@@ -63,7 +63,7 @@ class SystemStatus(APIModel):
 
 class RaspberryPiHealth(APIModel):
     status: Literal["ok", "warning", "critical", "unavailable"]
-    power_supply: str
+    power_supply: str | None = None
     thermal_state: str
     performance_state: str
 

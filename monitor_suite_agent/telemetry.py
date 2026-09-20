@@ -492,7 +492,6 @@ def read_amd64_health(
         return (
             {
                 "status": "unavailable",
-                "power_supply": "unavailable",
                 "thermal_state": "unavailable",
                 "performance_state": "unavailable",
             },
@@ -508,7 +507,6 @@ def read_amd64_health(
     return (
         {
             "status": status,
-            "power_supply": "not_supported",
             "thermal_state": thermal_state,
             "performance_state": performance_state,
         },
@@ -1619,7 +1617,8 @@ class TelemetrySampler:
             if self.architecture == "aarch64"
             else self._hardware_values.get("health", build_health(None))
         )
-        self._log_state_transition("Current undervoltage", health_state["power_supply"])
+        if "power_supply" in health_state:
+            self._log_state_transition("Current undervoltage", health_state["power_supply"])
         self._log_state_transition("Thermal limiting", health_state["thermal_state"])
         self._log_state_transition("Performance limiting", health_state["performance_state"])
 

@@ -495,7 +495,6 @@ def test_amd64_health_uses_thermal_limits_and_throttle_deltas(tmp_path: Path) ->
     health, counts = read_amd64_health(tmp_path / "hwmon", tmp_path / "cpu", None)
     assert health == {
         "status": "ok",
-        "power_supply": "not_supported",
         "thermal_state": "normal",
         "performance_state": "normal",
     }
@@ -531,7 +530,6 @@ def test_amd64_health_is_unavailable_without_supported_signals(tmp_path: Path) -
     assert counts == {}
     assert health == {
         "status": "unavailable",
-        "power_supply": "unavailable",
         "thermal_state": "unavailable",
         "performance_state": "unavailable",
     }

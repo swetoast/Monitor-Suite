@@ -86,3 +86,15 @@ def test_amd64_optional_attributes_are_typed_without_changing_core_state() -> No
     assert cooling.fan_speed_rpm == 836
     assert cooling.fan_count == 6
     assert cooling.active_fan_count == 5
+
+
+def test_amd64_health_omits_unsupported_power_supply() -> None:
+    health = RaspberryPiHealth.model_validate(
+        {
+            "status": "ok",
+            "thermal_state": "normal",
+            "performance_state": "normal",
+        }
+    )
+    assert "power_supply" not in health.model_dump(exclude_none=True)
+

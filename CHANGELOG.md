@@ -1,6 +1,7 @@
 ## Unreleased
 
 - Added capability-driven amd64 system health using coretemp/k10temp thermal limits and Intel thermal-throttle counter deltas while preserving Raspberry Pi firmware health behavior.
+- Omitted the unsupported `power_supply` field from amd64 health responses while retaining it for Raspberry Pi firmware health.
 
 - Added simple aarch64 and amd64 architecture routing while preserving the existing Raspberry Pi path.
 - Added amd64 DMI model detection through the existing `device.model` field without adding DMI-specific attributes or exposing unique identifiers.
