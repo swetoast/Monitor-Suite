@@ -10,6 +10,10 @@
 - Added strict power-cache freshness and schema validation while retaining `power.value_w` as the existing sensor state.
 - Added `rapl_package` as a measured power source and optional `domain: package` metadata.
 - Added direct fixture-driven amd64 acceptance tests for exact counts, package temperature, multi-fan cooling, privacy, and public-contract stability.
+- Fixed uninstall cleanup so the amd64 power service and timer are stopped, disabled, and removed.
+- Distinguished an unsupported missing amd64 power cache from a stale or invalid existing cache in probe health.
+- Prevented unavailable optional frequency, network, or root-disk counters from permanently degrading daemon health when CPU counters remain available.
+- Simplified sampler shutdown and removed redundant probe-health conditions and unused values.
 
 ## 2.8.1
 

@@ -360,8 +360,8 @@ status_agent() {
 
 uninstall_agent() {
     need_root
-    systemctl disable --now "$SERVICE_NAME" "$SMART_TIMER_NAME" 2>/dev/null || true
-    rm -f "/etc/systemd/system/$SMART_SERVICE_NAME" "/etc/systemd/system/$SMART_TIMER_NAME"
+    systemctl disable --now "$SERVICE_NAME" "$SMART_TIMER_NAME" "$POWER_TIMER_NAME" "$POWER_SERVICE_NAME" 2>/dev/null || true
+    rm -f "/etc/systemd/system/$SMART_SERVICE_NAME" "/etc/systemd/system/$SMART_TIMER_NAME" "/etc/systemd/system/$POWER_SERVICE_NAME" "/etc/systemd/system/$POWER_TIMER_NAME"
     rm -f "$SERVICE_FILE"
     systemctl daemon-reload
     rm -rf "$INSTALL_DIR" /run/monitor-suite-agent

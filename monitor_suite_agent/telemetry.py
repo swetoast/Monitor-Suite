@@ -1101,7 +1101,7 @@ class TelemetrySampler:
 
     def _record_probe(self, name: str, success: bool, now: float) -> None:
         """Update one probe group and log only unavailable/recovery transitions."""
-        previous, changed = self._probe_health[name].update(success, now)
+        _, changed = self._probe_health[name].update(success, now)
         if not changed:
             return
         label = {
@@ -1167,15 +1167,12 @@ class TelemetrySampler:
     async def stop(self) -> None:
         """Stop the sampler cleanly."""
         self._stop.set()
-        for task in (self._task,):
-            if task:
-                task.cancel()
-        for task in (self._task,):
-            if task:
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
         self._task = None
 
     async def _run(self) -> None:
@@ -1219,8 +1216,7 @@ class TelemetrySampler:
             return {"status": "stale", "sample_available": True}
 
         repeated_failure = any(
-            probe.available is False and probe.consecutive_failures >= 2
-            for probe in self._probe_health.values()
+            probe.available is False for probe in self._probe_health.values()
         )
         return {
             "status": "degraded" if repeated_failure else "ok",
@@ -1339,14 +1335,17 @@ class TelemetrySampler:
                     }
                     self._hardware_values["flags"] = None
             else:
-                cached_power, _power_cache_current = read_power_cache(
+                cached_power, power_cache_current = read_power_cache(
                     self.settings.power_cache_file,
                     self.settings.power_cache_max_age_seconds,
                     self._now(),
                 )
                 self._hardware_values["power"] = cached_power
                 self._hardware_values["flags"] = None
-                self._record_probe("power", True, mono)
+                power_expected = self.settings.power_cache_file.exists()
+                self._record_probe(
+                    "power", power_cache_current or not power_expected, mono
+                )
             self._power_schedule.schedule(mono, self.settings.power_sample_interval_seconds)
 
         temperature = self._hardware_values.get("temperature_c")
@@ -1362,11 +1361,7 @@ class TelemetrySampler:
         disk_now = parse_diskstats(_read_text(self.paths.proc_diskstats), self.root_device, mono)
         disk_read, disk_write = calculate_rates(self._previous_disk, disk_now)
         self._previous_disk = disk_now
-        self._record_probe(
-            "fast",
-            cpu_now is not None and frequency is not None and network_now is not None and disk_now is not None,
-            mono,
-        )
+        self._record_probe("fast", cpu_now is not None, mono)
 
 
         if self._nvme_temperature_schedule.due(mono):

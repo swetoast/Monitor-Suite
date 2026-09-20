@@ -314,3 +314,12 @@ def test_documentation_describes_unprivileged_api_service() -> None:
     assert "root-only networkless SMART collector" in install
     assert "amd64-only root-only networkless RAPL power collector" in install
     assert "Separate root-only oneshot services" in security
+
+
+def test_uninstall_removes_all_power_collector_units() -> None:
+    text = INSTALLER.read_text()
+    uninstall = text[text.index("uninstall_agent() {") : text.index("usage() {")]
+    assert '"$POWER_TIMER_NAME"' in uninstall
+    assert '"$POWER_SERVICE_NAME"' in uninstall
+    assert '"/etc/systemd/system/$POWER_SERVICE_NAME"' in uninstall
+    assert '"/etc/systemd/system/$POWER_TIMER_NAME"' in uninstall

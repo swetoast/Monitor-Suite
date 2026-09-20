@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from monitor_suite_agent.config import Settings
 from monitor_suite_agent.models import HealthResponse, StatusResponse
-from monitor_suite_agent.telemetry import TelemetrySampler
+from monitor_suite_agent.telemetry import TelemetrySampler, Paths
 
 
 def test_smart_cache_has_bounded_freshness() -> None:
@@ -219,3 +219,58 @@ def test_retired_in_process_smart_controls_are_absent() -> None:
     assert "smart_sample_interval_seconds" not in config
     assert "smart_retry_interval_seconds" not in config
     assert "smart_runner" not in telemetry
+
+
+def test_fast_probe_depends_only_on_cpu_counters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from monitor_suite_agent import telemetry
+
+    proc_stat = tmp_path / "stat"
+    proc_stat.write_text("cpu  100 0 50 850 0 0 0 0 0 0\n")
+    sampler = TelemetrySampler(
+        Settings(),
+        paths=Paths(root=tmp_path, proc_stat=proc_stat),
+        machine=lambda: "amd64",
+    )
+    monkeypatch.setattr(telemetry, "read_frequency_mhz", lambda path: None)
+    monkeypatch.setattr(telemetry, "read_network_counter", lambda *args: None)
+    monkeypatch.setattr(telemetry, "parse_diskstats", lambda *args: None)
+
+    sampler._collect_sync()
+
+    assert sampler._probe_health["fast"].available is True
+
+
+def test_missing_amd64_power_cache_is_capability_gap(tmp_path: Path) -> None:
+    sampler = TelemetrySampler(
+        Settings(power_cache_file=tmp_path / "missing-power.json"),
+        paths=Paths(root=tmp_path),
+        machine=lambda: "amd64",
+    )
+
+    sampler._collect_sync()
+    sampler._power_schedule.next_due = float("-inf")
+    sampler._collect_sync()
+
+    assert sampler._probe_health["power"].available is True
+    assert sampler._hardware_values["power"]["source"] == "unavailable"
+
+
+def test_stale_existing_amd64_power_cache_is_probe_failure(tmp_path: Path) -> None:
+    cache = tmp_path / "power.json"
+    cache.write_text(
+        '{"schema_version":1,"generated_at":"2020-01-01T00:00:00Z",'
+        '"value_w":5.0,"source":"rapl_package","domain":"package"}'
+    )
+    sampler = TelemetrySampler(
+        Settings(power_cache_file=cache),
+        paths=Paths(root=tmp_path),
+        machine=lambda: "amd64",
+    )
+
+    sampler._collect_sync()
+    sampler._power_schedule.next_due = float("-inf")
+    sampler._collect_sync()
+
+    assert sampler._probe_health["power"].available is False

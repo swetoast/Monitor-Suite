@@ -327,7 +327,7 @@ The `health` object is currently derived entirely from Raspberry Pi firmware thr
 
 Ensure platform capability gaps do not degrade daemon health:
 
-- Distinguish "unsupported on this platform" from "expected probe failed." A source that is legitimately absent on amd64 (Pi firmware health, PMIC rails) reports `unavailable` without incrementing probe-failure accounting or moving `/health` to `degraded`.
+- Distinguish "unsupported on this platform" from "expected probe failed." A source that is legitimately absent on amd64 (Pi firmware health, PMIC rails, or a missing RAPL cache on hardware without readable package counters) reports `unavailable` without incrementing probe-failure accounting or moving `/health` to `degraded`. An existing but stale, malformed, or unreadable RAPL cache is treated as a real collector failure.
 - Removing the unconditional `vcgencmd` calls on amd64 eliminates the per-cycle power-probe failures the current code would record on that platform.
 - Preserve failure isolation, last-known-good retention, and the stateless design unchanged. The RAPL cache is runtime-only under `/run`, and no new runtime dependency is introduced.
 
