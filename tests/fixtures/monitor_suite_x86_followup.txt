@@ -1,0 +1,48 @@
+MONITOR_SUITE_X86_FOLLOWUP_V1
+architecture=x86_64
+kernel=Linux 6.8.0-generic
+data_origin=synthetic_from_verified_x86_evidence
+[programs]
+program name=smartctl available=yes
+program name=mdadm available=yes
+program name=lsblk available=yes
+program name=ip available=yes
+program name=ethtool available=yes
+program name=nvme available=yes
+program name=udevadm available=yes
+program name=findmnt available=yes
+[physical_disks]
+disk id=disk1 transport=nvme rotational=0 removable=0 sectors=1953525168
+disk id=disk2 transport=sata rotational=1 removable=0 sectors=3907029168
+physical_disk_count=2
+[smart]
+smartctl_available=yes
+device id=smart1 type=nvme health=healthy
+device id=smart2 type=sat health=healthy
+smart_scanned_count=2
+smart_readable_count=2
+smart_healthy_count=2
+smart_unhealthy_count=0
+[raid]
+array id=raid1 level=raid1 state=clean configured_devices=2 discovered_members=2 degraded_devices=0 sync_action=idle
+array_count=1
+mdstat_readable=yes
+mdadm_available=yes
+[network_interfaces]
+interface name=eth0 kind=physical default_route=yes operstate=up carrier=1 speed_mbps=1000
+interface name=br0 kind=bridge default_route=no operstate=up carrier=1 speed_mbps=1000
+interface name=veth0 kind=virtual default_route=no operstate=down carrier=0 speed_mbps=-1
+interface_count=3
+physical_interface_count=1
+virtual_interface_count=2
+default_route_detected=yes
+[privacy]
+synthetic_fixture=yes
+hostname_saved=no
+usernames_saved=no
+ip_addresses_saved=no
+mac_addresses_saved=no
+serial_numbers_saved=no
+uuids_saved=no
+device_paths_saved=no
+mount_paths_saved=no

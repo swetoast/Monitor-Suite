@@ -1,0 +1,52 @@
+MONITOR_SUITE_X86_POWER_PROBE_V1
+architecture=x86_64
+kernel=Linux 6.8.0-generic
+data_origin=synthetic_from_verified_x86_evidence
+[programs]
+program name=perf available=yes
+program name=turbostat available=yes
+program name=rdmsr available=yes
+program name=modprobe available=yes
+program name=timeout available=yes
+[kernel_support]
+module name=intel_rapl_common loaded=yes
+module name=intel_rapl_msr loaded=yes
+module name=intel_rapl_tpmi loaded=no
+module name=amd_rapl loaded=no
+module name=msr loaded=yes
+perf_event_paranoid=4
+[powercap]
+domain id=domain1 name=package-0 enabled=1 readable=yes changing=yes wrapped=no max_energy_range_uj=262143328850 delta_uj=16000000 sample_seconds=2 average_watts=8.000000
+domain id=domain2 name=core enabled=1 readable=yes changing=yes wrapped=no max_energy_range_uj=262143328850 delta_uj=2000000 sample_seconds=2 average_watts=1.000000
+energy_counter_count=2
+readable_energy_counter_count=2
+changing_energy_counter_count=2
+powercap_capability_expected=yes
+[perf_rapl]
+event id=event1 name=power/energy-cores/ readable=yes measurement=1.00 unit=Joules sample_seconds=1
+event id=event2 name=power/energy-pkg/ readable=yes measurement=8.00 unit=Joules sample_seconds=1
+rapl_event_count=2
+readable_rapl_event_count=2
+perf_capability_expected=yes
+[turbostat]
+turbostat_available=yes
+turbostat_readable=yes
+metric name=PkgWatt watts=8.00
+metric name=CorWatt watts=1.00
+metric name=GFXWatt watts=0.00
+metric name=RAMWatt watts=0.00
+turbostat_power_metric_count=4
+turbostat_capability_expected=yes
+[capability_summary]
+recommended_source=powercap_energy_delta
+power_metering=yes
+note=Power limits and TDP values are not treated as live power measurements.
+[privacy]
+synthetic_fixture=yes
+hostname_saved=no
+usernames_saved=no
+addresses_saved=no
+serial_numbers_saved=no
+uuids_saved=no
+device_paths_saved=no
+raw_command_output_saved=no

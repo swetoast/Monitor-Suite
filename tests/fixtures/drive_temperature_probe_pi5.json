@@ -1,0 +1,203 @@
+{
+  "source": "privacy-scrubbed Raspberry Pi 5 drive probe",
+  "smartctl_scan": "/dev/sda -d sat # /dev/sda [SAT], ATA device\n/dev/sdb -d sat # /dev/sdb [SAT], ATA device\n/dev/nvme0 -d nvme # /dev/nvme0, NVMe device\n/dev/nvme1 -d nvme # /dev/nvme1, NVMe device",
+  "block_devices": [
+    "sda",
+    "sdb",
+    "nvme0n1",
+    "nvme1n1"
+  ],
+  "smart": {
+    "/dev/sda": {
+      "smart_support": {
+        "available": true,
+        "enabled": true
+      },
+      "smart_status": {
+        "passed": true
+      },
+      "smartctl": {
+        "exit_status": 4,
+        "messages": [
+          {
+            "severity": "information",
+            "string": "CHECK POWER MODE not implemented, ignoring -n option"
+          },
+          {
+            "severity": "warning",
+            "string": "Warning: This result is based on an Attribute check."
+          }
+        ]
+      },
+      "temperature": {
+        "current": 29
+      },
+      "ata_smart_attributes": {
+        "table": [
+          {
+            "id": 5,
+            "raw": {
+              "value": 0
+            },
+            "when_failed": ""
+          },
+          {
+            "id": 194,
+            "raw": {
+              "value": 29
+            },
+            "when_failed": ""
+          },
+          {
+            "id": 197,
+            "raw": {
+              "value": 0
+            },
+            "when_failed": ""
+          },
+          {
+            "id": 198,
+            "raw": {
+              "value": 0
+            },
+            "when_failed": ""
+          }
+        ]
+      }
+    },
+    "/dev/sdb": {
+      "smart_support": {
+        "available": true,
+        "enabled": true
+      },
+      "smart_status": {
+        "passed": true
+      },
+      "smartctl": {
+        "exit_status": 4,
+        "messages": [
+          {
+            "severity": "information",
+            "string": "CHECK POWER MODE not implemented, ignoring -n option"
+          },
+          {
+            "severity": "warning",
+            "string": "Warning: This result is based on an Attribute check."
+          }
+        ]
+      },
+      "temperature": {
+        "current": 28
+      },
+      "ata_smart_attributes": {
+        "table": [
+          {
+            "id": 5,
+            "raw": {
+              "value": 0
+            },
+            "when_failed": ""
+          },
+          {
+            "id": 194,
+            "raw": {
+              "value": 28
+            },
+            "when_failed": ""
+          },
+          {
+            "id": 197,
+            "raw": {
+              "value": 0
+            },
+            "when_failed": ""
+          },
+          {
+            "id": 198,
+            "raw": {
+              "value": 0
+            },
+            "when_failed": ""
+          }
+        ]
+      }
+    },
+    "/dev/nvme0": {
+      "smart_support": {
+        "available": true,
+        "enabled": true
+      },
+      "smart_status": {
+        "passed": true
+      },
+      "smartctl": {
+        "exit_status": 0
+      },
+      "temperature": {
+        "current": 20
+      },
+      "nvme_smart_health_information_log": {
+        "critical_warning": 0,
+        "media_errors": 0,
+        "percentage_used": 2,
+        "temperature": 20,
+        "temperature_sensors": [
+          null,
+          55
+        ]
+      }
+    },
+    "/dev/nvme1": {
+      "smart_support": {
+        "available": true,
+        "enabled": true
+      },
+      "smart_status": {
+        "passed": true
+      },
+      "smartctl": {
+        "exit_status": 0
+      },
+      "temperature": {
+        "current": 32
+      },
+      "nvme_smart_health_information_log": {
+        "critical_warning": 0,
+        "media_errors": 0,
+        "percentage_used": 25,
+        "temperature": 32,
+        "temperature_sensors": [
+          32,
+          30
+        ]
+      }
+    }
+  },
+  "hwmon": [
+    {
+      "controller": "nvme0",
+      "label": "Composite",
+      "value_millidegree_c": 19850
+    },
+    {
+      "controller": "nvme0",
+      "label": "Sensor 2",
+      "value_millidegree_c": 54850
+    },
+    {
+      "controller": "nvme1",
+      "label": "Composite",
+      "value_millidegree_c": 31850
+    },
+    {
+      "controller": "nvme1",
+      "label": "Sensor 1",
+      "value_millidegree_c": 31850
+    },
+    {
+      "controller": "nvme1",
+      "label": "Sensor 2",
+      "value_millidegree_c": 29850
+    }
+  ]
+}
