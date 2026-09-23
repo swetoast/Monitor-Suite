@@ -73,3 +73,16 @@ def test_x86_fixtures_contain_no_unique_or_network_identifiers() -> None:
         assert not mac.search(text), path.name
         assert "/home/" not in text
         assert "/mnt/" not in text
+
+
+def test_intel_nuc_fixture_records_rapl_without_inventing_cooling() -> None:
+    values = _values(FIXTURES / "monitor_suite_intel_nuc_rapl_fixture.txt")
+    assert values["fixture_kind"] == "intel_nuc_rapl_no_rpm"
+    assert values["rapl_package_name"] == "package-0"
+    assert values["rapl_package_energy_readable"] == "1"
+    assert values["rapl_package_max_energy_range_uj"] == "262143328850"
+    assert values["fan_input_count"] == "0"
+    assert values["pwm_input_count"] == "0"
+    assert values["thermal_fan_cooling_device_count"] == "5"
+    assert values["public_cooling_expected"] == "omitted"
+    assert values["privacy_hostname"] == "removed"

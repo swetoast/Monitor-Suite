@@ -19,16 +19,48 @@ def configured_cache() -> Path:
     return Path(os.getenv("MONITOR_SUITE_POWER_CACHE", str(DEFAULT_CACHE)))
 
 
-def discover_package_zone(powercap_root: Path) -> Path | None:
-    """Find the first readable package energy domain by semantic name."""
-    for energy_path in sorted(powercap_root.glob("**/energy_uj")):
-        name_path = energy_path.parent / "name"
+def _powercap_zones(powercap_root: Path) -> list[Path]:
+    """Return unique powercap zones without following recursive device aliases."""
+    try:
+        first_level = sorted(powercap_root.iterdir())
+    except OSError:
+        return []
+
+    candidates = list(first_level)
+    for entry in first_level:
         try:
-            name = name_path.read_text(encoding="ascii").strip().lower()
-        except (OSError, UnicodeError):
+            if entry.is_dir():
+                candidates.extend(sorted(entry.iterdir()))
+        except OSError:
             continue
-        if name.startswith("package-") and os.access(energy_path, os.R_OK):
-            return energy_path.parent
+
+    zones: list[Path] = []
+    seen: set[tuple[int, int]] = set()
+    for candidate in candidates:
+        if not (candidate / "name").is_file() or not (candidate / "energy_uj").is_file():
+            continue
+        try:
+            stat = candidate.stat()
+        except OSError:
+            continue
+        identity = (stat.st_dev, stat.st_ino)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        zones.append(candidate)
+    return zones
+
+
+def discover_package_zone(powercap_root: Path) -> Path | None:
+    """Find a readable package domain across class and control-type layouts."""
+    for zone in _powercap_zones(powercap_root):
+        try:
+            name = (zone / "name").read_text(encoding="ascii").strip().lower()
+            int((zone / "energy_uj").read_text(encoding="ascii").strip())
+        except (OSError, UnicodeError, ValueError):
+            continue
+        if name.startswith("package-"):
+            return zone
     return None
 
 

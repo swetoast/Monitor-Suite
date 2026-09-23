@@ -90,3 +90,31 @@ def test_discover_package_zone_ignores_non_ascii_name(tmp_path: Path) -> None:
     (good / "name").write_text("package-1")
 
     assert discover_package_zone(tmp_path) == good
+
+
+def test_discover_package_zone_supports_arch_nuc_class_layout(tmp_path: Path) -> None:
+    control = tmp_path / "intel-rapl"
+    package = control / "intel-rapl:0"
+    core = package / "intel-rapl:0:0"
+    for zone, name, enabled in ((package, "package-0", "1"), (core, "core", "0")):
+        zone.mkdir(parents=True, exist_ok=True)
+        (zone / "name").write_text(name)
+        (zone / "enabled").write_text(enabled)
+        (zone / "energy_uj").write_text("37336169494")
+        (zone / "max_energy_range_uj").write_text("262143328850")
+
+    # The child domain being disabled must not hide the readable package counter.
+    assert discover_package_zone(tmp_path) == package
+
+
+def test_discover_package_zone_deduplicates_class_aliases(tmp_path: Path) -> None:
+    control = tmp_path / "intel-rapl"
+    package = control / "intel-rapl:0"
+    package.mkdir(parents=True)
+    (package / "name").write_text("package-0")
+    (package / "energy_uj").write_text("100")
+    (tmp_path / "intel-rapl:0").symlink_to(package, target_is_directory=True)
+
+    discovered = discover_package_zone(tmp_path)
+    assert discovered is not None
+    assert discovered.samefile(package)

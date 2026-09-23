@@ -1,3 +1,10 @@
+## 2.8.4
+
+- Added a privacy-scrubbed Intel NUC fixture from Arch Linux 6.18.51-1-lts with readable package, core, uncore, and platform RAPL counters.
+- Made RAPL package discovery work with both top-level powercap class entries and nested Intel control-type layouts without recursively following duplicate sysfs device aliases.
+- Treats a readable `package-0` energy counter as usable independently of disabled child-domain flags.
+- Records firmware fan cooling devices as capability evidence while omitting cooling telemetry when no exact `fanN_input` RPM channel exists.
+
 ## Unreleased
 
 - Added capability-driven amd64 system health using coretemp/k10temp thermal limits and Intel thermal-throttle counter deltas while preserving Raspberry Pi firmware health behavior.
